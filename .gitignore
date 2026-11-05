@@ -1,0 +1,9 @@
+# 비밀키 (공유·커밋 금지)
+.env
+*.env
+vworld_key.js
+
+# 압축본·캐시
+*.zip
+node_modules/
+.DS_Store
