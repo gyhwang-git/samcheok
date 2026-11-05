@@ -17,4 +17,4 @@ node scripts/download_and_analyze.mjs   # 상위 폴더 .env의 V-WORLD_KEY 필�
 node scripts/analyze_building_use.mjs
 node scripts/create_preview.mjs         # reports/building_age_preview.html 생성
 ```
-`reports/vworld_key.js`(브이월드 키)는 저장소에 올리지 않습니다. 키 파일이 없으면 배경지도는 OpenStreetMap으로 표시됩니다.
+`reports/vworld_key.js`(브이월드 키)는 저장소에 올리지 않습니다. 키 파일이 없으면 배경지도는 Esri 타일로 표시됩니다.

@@ -131,7 +131,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
     <div class="disclaimer" id="f3Disc"></div>
   </div>
   <div class="detail" id="detail"><h3>건물 정보</h3><p>지도에서 건물 도형을 눌러 속성을 확인하세요.</p></div>
-  <footer class="footer">출처: 국토교통부·브이월드 GIS건물통합정보 API · <a href="https://www.data.go.kr/catalog/15083092/fileData.json" target="_blank" rel="noreferrer">공식 데이터 정보</a> · 용도: 건축물대장 주용도코드 · 배경지도: 브이월드 WMTS(같은 폴더에 vworld_key.js가 있을 때), 없으면 © OpenStreetMap contributors</footer>
+  <footer class="footer">출처: 국토교통부·브이월드 GIS건물통합정보 API · <a href="https://www.data.go.kr/catalog/15083092/fileData.json" target="_blank" rel="noreferrer">공식 데이터 정보</a> · 용도: 건축물대장 주용도코드 · 배경지도: 브이월드 WMTS(같은 폴더에 vworld_key.js가 있을 때), 없으면 Esri 타일(© Esri, HERE, Garmin, © OpenStreetMap contributors)</footer>
 </aside>
 <button class="toggle" id="togglePanel" aria-expanded="true">◀ 패널 접기</button>
 <div class="zoom"><button id="zoomIn" aria-label="확대">+</button><button id="zoomOut" aria-label="축소">−</button></div>
@@ -229,19 +229,20 @@ function resize(){const r=canvas.getBoundingClientRect(),dpr=window.devicePixelR
 function fitView(){const o=panelOffset();zoom=1;panX=o.x/2;panY=-o.y/2;resize();}
 toggleBtn.addEventListener('click',()=>{const c=document.body.classList.toggle('collapsed');toggleBtn.textContent=c?'▶ 패널 열기':'◀ 패널 접기';toggleBtn.setAttribute('aria-expanded',String(!c));});
 function project(x,y,w,h){const S=baseScale*zoom;return [w/2+(x-cx)*S+panX,h/2+(y-cy)*S+panY];}
-const BASEMAPS={white:{layer:'white',ext:'png',max:18,carto:'light_all'},Base:{layer:'Base',ext:'png',max:19,carto:'rastertiles/voyager'},Satellite:{layer:'Satellite',ext:'jpeg',max:19,carto:'dark_all'}};
-const BASE_ATTR=VKEY?'배경 © VWorld':'배경 © OpenStreetMap contributors';
-if(!VKEY){const o=document.querySelector('#basemap option[value="Satellite"]');if(o)o.remove();const g=document.querySelector('#basemap option[value="white"]');if(g)g.textContent='밝은 지도';const b=document.querySelector('#basemap option[value="Base"]');if(b)b.textContent='기본 지도';}
+// 키가 없으면(공개 배포본) Esri 타일 사용. OSM 공식 타일은 github.io 리퍼러에 429를 반환해 쓰지 않음
+const BASEMAPS={white:{layer:'white',ext:'png',max:18,esri:'Canvas/World_Light_Gray_Base',emax:16},Base:{layer:'Base',ext:'png',max:19,esri:'World_Street_Map',emax:19},Satellite:{layer:'Satellite',ext:'jpeg',max:19,esri:'World_Imagery',emax:19}};
+const BASE_ATTR=VKEY?'배경 © VWorld':'배경 © Esri, HERE, Garmin, © OpenStreetMap contributors';
+if(!VKEY){const g=document.querySelector('#basemap option[value="white"]');if(g)g.textContent='밝은 지도';const b=document.querySelector('#basemap option[value="Base"]');if(b)b.textContent='기본 지도';const o=document.querySelector('#basemap option[value="Satellite"]');if(o)o.textContent='위성 영상';}
 const tileCache=new Map();let drawPending=false;
 function requestDraw(){if(drawPending)return;drawPending=true;requestAnimationFrame(()=>{drawPending=false;draw();});}
-function getTile(bm,z,x,y){const k=(VKEY?bm.layer:'osm')+'/'+z+'/'+y+'/'+x;let t=tileCache.get(k);if(!t){t=new Image();t.onload=requestDraw;t.src=VKEY?'https://api.vworld.kr/req/wmts/1.0.0/'+VKEY+'/'+k+'.'+bm.ext:'https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';tileCache.set(k,t);if(tileCache.size>800)tileCache.delete(tileCache.keys().next().value);}return t;}
+function getTile(bm,z,x,y){const k=(VKEY?bm.layer:bm.esri)+'/'+z+'/'+y+'/'+x;let t=tileCache.get(k);if(!t){t=new Image();t.onload=requestDraw;t.src=VKEY?'https://api.vworld.kr/req/wmts/1.0.0/'+VKEY+'/'+k+'.'+bm.ext:'https://server.arcgisonline.com/ArcGIS/rest/services/'+bm.esri+'/MapServer/tile/'+z+'/'+y+'/'+x;tileCache.set(k,t);if(tileCache.size>800)tileCache.delete(tileCache.keys().next().value);}return t;}
 const ready=t=>t&&t.complete&&t.naturalWidth>0;
-function drawTiles(w,h,S){ctx.save();if(!VKEY&&basemapSel.value==='white')ctx.filter='grayscale(1) brightness(1.08) contrast(.85)';drawTiles0(w,h,S);ctx.restore();}
-function drawTiles0(w,h,S){const bm=BASEMAPS[basemapSel.value];if(!bm)return;const z=Math.max(6,Math.min(VKEY?bm.max:19,Math.round(Math.log2(S/256)))),n=2**z,ts=S/n;
+function drawTiles(w,h,S){ctx.save();drawTiles0(w,h,S);ctx.restore();}
+function drawTiles0(w,h,S){const bm=BASEMAPS[basemapSel.value];if(!bm)return;const z=Math.max(6,Math.min(VKEY?bm.max:bm.emax,Math.round(Math.log2(S/256)))),n=2**z,ts=S/n;
 const tx0=Math.floor((cx+(-w/2-panX)/S)*n),tx1=Math.floor((cx+(w/2-panX)/S)*n),ty0=Math.max(0,Math.floor((cy+(-h/2-panY)/S)*n)),ty1=Math.min(n-1,Math.floor((cy+(h/2-panY)/S)*n));
 for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++){const xx=((tx%n)+n)%n,sx=w/2+(tx/n-cx)*S+panX,sy=h/2+(ty/n-cy)*S+panY,t=getTile(bm,z,xx,ty);
 if(ready(t)){ctx.drawImage(t,sx,sy,ts+.5,ts+.5);continue;}
-for(let d=1;d<=4&&z-d>=6;d++){const p=tileCache.get((VKEY?bm.layer:'osm')+'/'+(z-d)+'/'+(ty>>d)+'/'+(xx>>d));if(ready(p)){const f=1<<d,s=256/f;ctx.drawImage(p,(xx%f)*s,(ty%f)*s,s,s,sx,sy,ts+.5,ts+.5);break;}}}}
+for(let d=1;d<=4&&z-d>=6;d++){const p=tileCache.get((VKEY?bm.layer:bm.esri)+'/'+(z-d)+'/'+(ty>>d)+'/'+(xx>>d));if(ready(p)){const f=1<<d,s=256/f;ctx.drawImage(p,(xx%f)*s,(ty%f)*s,s,s,sx,sy,ts+.5,ts+.5);break;}}}}
 function visible(f){if(tab==='form3')return !!(f3L&&f3L.bld);if(tab==='form2')return f2L.bld;if(tab==='form')return fLayers.bld;if(tab==='struct')return sLayers.bld&&f[11]>=0;if(tab==='potato')return inScene(f);const v=filter.value;if(v==='all')return true;if(v==='known')return f[7]!==UNK;return Number(v)===(tab==='age'?f[0]:f[7]);}
 function styleOf(f){return tab==='age'?[colors[f[0]],f[0]===11?.72:.85]:[UG[f[7]].color,f[7]===UNK?.4:.88];}
 function draw(){const r=canvas.getBoundingClientRect(),w=r.width,h=r.height,S=baseScale*zoom;ctx.clearRect(0,0,w,h);ctx.fillStyle='#eef2f6';ctx.fillRect(0,0,w,h);drawTiles(w,h,S);
