@@ -93,7 +93,7 @@ const template = `<!doctype html>
 <style>
 :root{--ink:#132238;--muted:#607089;--line:#e5eaf0;--surface:#fff;--bg:#eef2f6;--teal:#0f766e;--pw:min(400px,calc(100vw - 24px))}
 *{box-sizing:border-box}html,body{height:100%}body{margin:0;overflow:hidden;background:var(--bg);color:var(--ink);font-family:Inter,"Malgun Gothic","Noto Sans KR",sans-serif}
-#map{position:fixed;inset:0;width:100vw;height:100vh;display:block;cursor:grab;touch-action:none}#map.dragging{cursor:grabbing}
+#basemapCanvas{position:fixed;inset:0;width:100vw;height:100vh;display:block;pointer-events:none;background:#eef2f6}#map{position:fixed;inset:0;width:100vw;height:100vh;display:block;cursor:grab;touch-action:none;background:transparent}#map.dragging{cursor:grabbing}
 .glass{background:#ffffffeb;backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:14px;box-shadow:0 6px 24px #1a2b4524}
 .panel{position:fixed;left:12px;top:12px;bottom:12px;width:var(--pw);overflow:auto;padding:16px 16px 14px;z-index:2;transition:transform .25s ease}body.collapsed .panel{transform:translateX(calc(-100% - 24px))}
 .toggle{position:fixed;top:12px;left:calc(var(--pw) + 20px);z-index:3;transition:left .25s ease;box-shadow:0 2px 8px #1a2b4520}body.collapsed .toggle{left:12px}
@@ -123,10 +123,12 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
 @media(max-width:1100px){.mapnote{display:none}}
 @media(max-width:760px){.panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:46vh}body.collapsed .panel{transform:translateY(calc(100% + 16px))}.toggle,body.collapsed .toggle{left:8px;top:8px}.legend{left:8px;right:56px;top:48px;bottom:auto;max-width:none;padding:7px 10px}.legend span{font-size:10px}.zoom{right:8px;top:8px}}
 </style>
+<link rel="preconnect" href="https://server.arcgisonline.com" crossorigin><link rel="preconnect" href="https://api.vworld.kr" crossorigin>
 <script src="vworld_key.js"></script>
 </head>
 <body>
-<script id="payload" type="application/json">__PAYLOAD__</script>
+<script>window.__BOUNDS=__BOUNDS__;</script>
+<canvas id="basemapCanvas" aria-hidden="true"></canvas>
 <canvas id="map" aria-label="삼척시 건물 분포 지도"></canvas>
 <aside class="panel glass" id="panel">
   <div class="eyebrow">Samcheok · Building age &amp; use</div><h1>삼척시 건물 노후도·용도</h1><p class="sub">사용승인일 기준 경과연수와 건축물대장 주용도를 지도에서 비교합니다.</p><span class="badge">분석 기준일 · 2026.11.04</span>
@@ -226,7 +228,37 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
 <div class="legend glass" id="legend"></div>
 <div id="tip" role="tooltip"></div>
 <script>
-const payload=JSON.parse(document.getElementById('payload').textContent);
+// ---------- 배경지도 (데이터와 분리, 페이지 열리자마자 표시) ----------
+(function(){
+  const VKEY=window.VWORLD_KEY||'',bc=document.getElementById('basemapCanvas'),bx=bc.getContext('2d'),sel=document.getElementById('basemap');
+  const mx=lon=>(lon+180)/360,my=lat=>{const s=Math.sin(lat*Math.PI/180);return .5-Math.log((1+s)/(1-s))/(4*Math.PI);};
+  // 키가 없으면(공개 배포본) Esri 타일 사용. OSM 공식 타일은 github.io 리퍼러에 429를 반환해 쓰지 않음
+  const BASEMAPS={white:{layer:'white',ext:'png',max:18,esri:'Canvas/World_Light_Gray_Base',emax:16},Base:{layer:'Base',ext:'png',max:19,esri:'World_Street_Map',emax:19},Satellite:{layer:'Satellite',ext:'jpeg',max:19,esri:'World_Imagery',emax:19}};
+  if(!VKEY){const g=sel.querySelector('option[value="white"]');if(g)g.textContent='밝은 지도';const b=sel.querySelector('option[value="Base"]');if(b)b.textContent='기본 지도';const o=sel.querySelector('option[value="Satellite"]');if(o)o.textContent='위성 영상';}
+  const cache=new Map();let view=null,pend=false;
+  const req=()=>{if(pend)return;pend=true;requestAnimationFrame(()=>{pend=false;render();});};
+  const keyOf=(bm,z,y,x)=>(VKEY?bm.layer:bm.esri)+'/'+z+'/'+y+'/'+x;
+  function getTile(bm,z,x,y){const k=keyOf(bm,z,y,x);let t=cache.get(k);if(!t){t=new Image();t.decoding='async';t.onload=req;t.src=VKEY?'https://api.vworld.kr/req/wmts/1.0.0/'+VKEY+'/'+k+'.'+bm.ext:'https://server.arcgisonline.com/ArcGIS/rest/services/'+bm.esri+'/MapServer/tile/'+z+'/'+y+'/'+x;cache.set(k,t);if(cache.size>600)cache.delete(cache.keys().next().value);}return t;}
+  const ready=t=>t&&t.complete&&t.naturalWidth>0;
+  function render(){if(!view)return;const r=bc.getBoundingClientRect(),w=r.width,h=r.height,dpr=window.devicePixelRatio||1,W=Math.round(w*dpr),H=Math.round(h*dpr);if(bc.width!==W||bc.height!==H){bc.width=W;bc.height=H;}
+    bx.setTransform(dpr,0,0,dpr,0,0);bx.clearRect(0,0,w,h);const bm=BASEMAPS[sel.value];if(!bm)return;const {cx,cy,S,panX,panY}=view;
+    const z=Math.max(6,Math.min(VKEY?bm.max:bm.emax,Math.round(Math.log2(S/256)))),n=2**z,ts=S/n;
+    const tx0=Math.floor((cx+(-w/2-panX)/S)*n),tx1=Math.floor((cx+(w/2-panX)/S)*n),ty0=Math.max(0,Math.floor((cy+(-h/2-panY)/S)*n)),ty1=Math.min(n-1,Math.floor((cy+(h/2-panY)/S)*n));
+    // 화면 중앙에서 가까운 타일부터 요청
+    const list=[];for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++)list.push([tx,ty]);const mxT=(tx0+tx1)/2,myT=(ty0+ty1)/2;list.sort((a,b)=>Math.hypot(a[0]-mxT,a[1]-myT)-Math.hypot(b[0]-mxT,b[1]-myT));
+    for(const [tx,ty] of list){const xx=((tx%n)+n)%n,sx=w/2+(tx/n-cx)*S+panX,sy=h/2+(ty/n-cy)*S+panY,t=getTile(bm,z,xx,ty);
+      if(ready(t)){bx.drawImage(t,sx,sy,ts+.5,ts+.5);continue;}
+      for(let d=1;d<=5&&z-d>=6;d++){const p=cache.get(keyOf(bm,z-d,ty>>d,xx>>d));if(ready(p)){const f=1<<d,s2=256/f;bx.drawImage(p,(xx%f)*s2,(ty%f)*s2,s2,s2,sx,sy,ts+.5,ts+.5);break;}}}}
+  window.BASE={VKEY,mx,my,setView(v){view=v;render();},render};
+  sel.addEventListener('change',render);window.addEventListener('resize',render);
+  // 데이터가 오기 전 초기 화면: 본체의 fitView와 같은 계산
+  const b=window.__BOUNDS,B=[mx(b[0]),my(b[3]),mx(b[2]),my(b[1])],panel=document.getElementById('panel'),wd=innerWidth,ht=innerHeight;
+  const o=document.body.classList.contains('collapsed')?{x:0,y:0}:wd>760?{x:panel.offsetWidth+24,y:0}:{x:0,y:panel.offsetHeight+16};
+  const S0=Math.min((wd-o.x-60)/(B[2]-B[0]),(ht-o.y-60)/(B[3]-B[1]));
+  window.BASE.setView({cx:(B[0]+B[2])/2,cy:(B[1]+B[3])/2,S:S0,panX:o.x/2,panY:-o.y/2});
+  const note=document.getElementById('mapnote');if(note)note.textContent='건물 데이터 불러오는 중…';
+})();
+function __main(payload){
 const features=payload.features,labels=payload.labels,colors=payload.colors,counts=payload.counts,US=payload.useStats,UG=US.groups,UNK=UG.length-1,AGE_BINS=payload.ageBins;
 const BIN_COLORS=['#86b6ef','#3987e5','#1c5cab','#0d366b'];
 const useNames=Object.fromEntries(US.codes.map(c=>[c.code,c.name]));
@@ -306,8 +338,7 @@ document.getElementById('panel').addEventListener('mouseleave',()=>{tip.style.di
 
 // ---------- 지도 ----------
 // 웹 메르카토르(0~1 월드 좌표)로 미리 변환해 브이월드 WMTS 타일과 좌표계를 맞춘다. 경계상자는 f[10].
-const VKEY=window.VWORLD_KEY||'',basemapSel=document.getElementById('basemap');
-const mx=lon=>(lon+180)/360,my=lat=>{const s=Math.sin(lat*Math.PI/180);return .5-Math.log((1+s)/(1-s))/(4*Math.PI);};
+const VKEY=BASE.VKEY,basemapSel=document.getElementById('basemap'),mx=BASE.mx,my=BASE.my;
 for(const f of features){let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;for(const ring of f[6])for(const p of ring){p[0]=mx(p[0]);p[1]=my(p[1]);if(p[0]<x0)x0=p[0];if(p[0]>x1)x1=p[0];if(p[1]<y0)y0=p[1];if(p[1]>y1)y1=p[1];}f[4]=mx(f[4]);f[5]=my(f[5]);f[10]=[x0,y0,x1,y1];}
 const b=payload.bounds,B=[mx(b[0]),my(b[3]),mx(b[2]),my(b[1])],cx=(B[0]+B[2])/2,cy=(B[1]+B[3])/2;let zoom=1,panX=0,panY=0,baseScale=1,drag=null,lastPointer=null;
 const panelEl=document.getElementById('panel'),toggleBtn=document.getElementById('togglePanel');
@@ -316,23 +347,12 @@ function resize(){const r=canvas.getBoundingClientRect(),dpr=window.devicePixelR
 function fitView(){const o=panelOffset();zoom=1;panX=o.x/2;panY=-o.y/2;resize();}
 toggleBtn.addEventListener('click',()=>{const c=document.body.classList.toggle('collapsed');toggleBtn.textContent=c?'▶ 패널 열기':'◀ 패널 접기';toggleBtn.setAttribute('aria-expanded',String(!c));});
 function project(x,y,w,h){const S=baseScale*zoom;return [w/2+(x-cx)*S+panX,h/2+(y-cy)*S+panY];}
-// 키가 없으면(공개 배포본) Esri 타일 사용. OSM 공식 타일은 github.io 리퍼러에 429를 반환해 쓰지 않음
-const BASEMAPS={white:{layer:'white',ext:'png',max:18,esri:'Canvas/World_Light_Gray_Base',emax:16},Base:{layer:'Base',ext:'png',max:19,esri:'World_Street_Map',emax:19},Satellite:{layer:'Satellite',ext:'jpeg',max:19,esri:'World_Imagery',emax:19}};
 const BASE_ATTR=VKEY?'배경 © VWorld':'배경 © Esri, HERE, Garmin, © OpenStreetMap contributors';
-if(!VKEY){const g=document.querySelector('#basemap option[value="white"]');if(g)g.textContent='밝은 지도';const b=document.querySelector('#basemap option[value="Base"]');if(b)b.textContent='기본 지도';const o=document.querySelector('#basemap option[value="Satellite"]');if(o)o.textContent='위성 영상';}
-const tileCache=new Map();let drawPending=false;
+let drawPending=false;
 function requestDraw(){if(drawPending)return;drawPending=true;requestAnimationFrame(()=>{drawPending=false;draw();});}
-function getTile(bm,z,x,y){const k=(VKEY?bm.layer:bm.esri)+'/'+z+'/'+y+'/'+x;let t=tileCache.get(k);if(!t){t=new Image();t.onload=requestDraw;t.src=VKEY?'https://api.vworld.kr/req/wmts/1.0.0/'+VKEY+'/'+k+'.'+bm.ext:'https://server.arcgisonline.com/ArcGIS/rest/services/'+bm.esri+'/MapServer/tile/'+z+'/'+y+'/'+x;tileCache.set(k,t);if(tileCache.size>800)tileCache.delete(tileCache.keys().next().value);}return t;}
-const ready=t=>t&&t.complete&&t.naturalWidth>0;
-function drawTiles(w,h,S){ctx.save();drawTiles0(w,h,S);ctx.restore();}
-function drawTiles0(w,h,S){const bm=BASEMAPS[basemapSel.value];if(!bm)return;const z=Math.max(6,Math.min(VKEY?bm.max:bm.emax,Math.round(Math.log2(S/256)))),n=2**z,ts=S/n;
-const tx0=Math.floor((cx+(-w/2-panX)/S)*n),tx1=Math.floor((cx+(w/2-panX)/S)*n),ty0=Math.max(0,Math.floor((cy+(-h/2-panY)/S)*n)),ty1=Math.min(n-1,Math.floor((cy+(h/2-panY)/S)*n));
-for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++){const xx=((tx%n)+n)%n,sx=w/2+(tx/n-cx)*S+panX,sy=h/2+(ty/n-cy)*S+panY,t=getTile(bm,z,xx,ty);
-if(ready(t)){ctx.drawImage(t,sx,sy,ts+.5,ts+.5);continue;}
-for(let d=1;d<=4&&z-d>=6;d++){const p=tileCache.get((VKEY?bm.layer:bm.esri)+'/'+(z-d)+'/'+(ty>>d)+'/'+(xx>>d));if(ready(p)){const f=1<<d,s=256/f;ctx.drawImage(p,(xx%f)*s,(ty%f)*s,s,s,sx,sy,ts+.5,ts+.5);break;}}}}
 function visible(f){if(tab==='form3')return !!(f3L&&f3L.bld);if(tab==='form2')return f2L.bld;if(tab==='form')return fLayers.bld;if(tab==='struct')return sLayers.bld&&f[11]>=0;if(tab==='potato')return inScene(f);const v=filter.value;if(v==='all')return true;if(v==='known')return f[7]!==UNK;return Number(v)===(tab==='age'?f[0]:f[7]);}
 function styleOf(f){return tab==='age'?[colors[f[0]],f[0]===11?.72:.85]:[UG[f[7]].color,f[7]===UNK?.4:.88];}
-function draw(){const r=canvas.getBoundingClientRect(),w=r.width,h=r.height,S=baseScale*zoom;ctx.clearRect(0,0,w,h);ctx.fillStyle='#eef2f6';ctx.fillRect(0,0,w,h);drawTiles(w,h,S);
+function draw(){const r=canvas.getBoundingClientRect(),w=r.width,h=r.height,S=baseScale*zoom;ctx.clearRect(0,0,w,h);BASE.setView({cx,cy,S,panX,panY});
 const vx0=cx+(-w/2-panX)/S,vx1=cx+(w/2-panX)/S,vy0=cy+(-h/2-panY)/S,vy1=cy+(h/2-panY)/S,ox=w/2-cx*S+panX,oy=h/2-cy*S+panY,outline=zoom>=6;
 if(tab==='form3'){drawForm3(w,h,S,ox,oy,vx0,vx1,vy0,vy1);return;}
 if(tab==='form2'){drawForm2(w,h,S,ox,oy,vx0,vx1,vy0,vy1);return;}
@@ -690,6 +710,12 @@ function renderForm3(){
 }
 renderForm3();
 setTab(tab);fitView();
+}
+// 건물 데이터는 별도 파일(gzip 전송)로 비동기 로드 — file:// 에서도 동작하도록 script 태그 사용
+(function(){const s=document.createElement('script');s.src='building_age_data.js?v=__DATAVER__';s.async=true;
+  s.onload=()=>{if(!window.__PAYLOAD){document.getElementById('mapnote').textContent='건물 데이터를 읽지 못했습니다.';return;}__main(window.__PAYLOAD);};
+  s.onerror=()=>{document.getElementById('mapnote').textContent='건물 데이터 파일(building_age_data.js)을 불러오지 못했습니다.';};
+  document.body.append(s);})();
 </script>
 </body></html>`;
 
@@ -708,10 +734,13 @@ const payload = JSON.stringify({
   form: computeUrbanForm(source.features),
   form3: computeUrbanForm3(source.features),
 });
-const html = template.replace('__PAYLOAD__', () => payload.replaceAll('</', '<\\/'));
+const dataVer = (await import('node:crypto')).createHash('sha1').update(payload).digest('hex').slice(0, 10);
+const html = template.replace('__BOUNDS__', () => JSON.stringify([minLon, minLat, maxLon, maxLat])).replace('__DATAVER__', dataVer);
 const outPath = path.join(reportDir, 'building_age_preview.html');
 await fs.mkdir(reportDir, { recursive: true });
 await fs.writeFile(outPath, html, 'utf8');
+const dataPath2 = path.join(reportDir, 'building_age_data.js');
+await fs.writeFile(dataPath2, '// create_preview.mjs 가 생성한 지도 데이터\nwindow.__PAYLOAD=' + payload + ';\n', 'utf8');
 
 // 브이월드 키는 HTML에 넣지 않고 같은 폴더의 vworld_key.js 로 분리한다 (공유 금지).
 const envText = await fs.readFile(path.resolve(projectDir, '..', '.env'), 'utf8').catch(() => '');
@@ -722,4 +751,4 @@ if (vworldKey) {
 } else {
   console.warn('.env 에 V-WORLD_KEY 가 없어 배경지도 없이 표시됩니다.');
 }
-console.log(`미리보기 작성: ${outPath} (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MB)`);
+console.log(`미리보기 작성: ${outPath} (${(Buffer.byteLength(html) / 1024).toFixed(0)} KB) + 데이터 ${(Buffer.byteLength(payload) / 1024 / 1024).toFixed(1)} MB`);
