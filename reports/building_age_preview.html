@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>삼척시 건물 노후도·용도</title>
+<title>삼척시 공간구조 변화 분석</title>
 <style>
 :root{--ink:#132238;--muted:#607089;--line:#e5eaf0;--surface:#fff;--bg:#eef2f6;--teal:#0f766e;--pw:min(400px,calc(100vw - 24px))}
 *{box-sizing:border-box}html,body{height:100%}body{margin:0;overflow:hidden;background:var(--bg);color:var(--ink);font-family:Inter,"Malgun Gothic","Noto Sans KR",sans-serif}
@@ -43,7 +43,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
 <canvas id="basemapCanvas" aria-hidden="true"></canvas>
 <canvas id="map" aria-label="삼척시 건물 분포 지도"></canvas>
 <aside class="panel glass" id="panel">
-  <div class="eyebrow">Samcheok · Building age &amp; use</div><h1>삼척시 건물 노후도·용도</h1><p class="sub">사용승인일 기준 경과연수와 건축물대장 주용도를 지도에서 비교합니다.</p><span class="badge">분석 기준일 · 2026.11.04</span>
+  <div class="eyebrow">Samcheok · Urban spatial change</div><h1>삼척시 공간구조 변화 분석</h1><p class="sub">건축물 사용승인연도·용도와 인구·사업체 통계로 삼척시 시가지의 형성과 축소, 중심지 이동을 시기별로 살펴봅니다.</p><span class="badge">분석 기준일 · 2026.11.04</span>
   <div class="tabs" role="tablist" style="grid-template-columns:repeat(4,1fr)"><button role="tab" id="tabAge" aria-selected="true" aria-controls="paneAge">노후도</button><button role="tab" id="tabUse" aria-selected="false" aria-controls="paneUse">건물 용도</button><button role="tab" id="tabPotato" aria-selected="false" aria-controls="panePotato">감자도</button><button role="tab" id="tabStruct" aria-selected="false" aria-controls="paneStruct">공간구조도</button><button role="tab" id="tabForm" aria-selected="false" aria-controls="paneForm">도시형태</button><button role="tab" id="tabForm2" aria-selected="false" aria-controls="paneForm2">도시형태2</button><button role="tab" id="tabForm3" aria-selected="false" aria-controls="paneForm3">도시형태3</button><button role="tab" id="tabTypes" aria-selected="false" aria-controls="paneTypes">변화 유형</button></div>
   <div class="controls"><label for="filter" id="filterLabel">연령대</label><select id="filter"></select><label for="basemap">배경</label><select id="basemap"><option value="light">밝은 지도</option><option value="voyager">기본 지도</option><option value="dark">어두운 지도</option><option value="none">없음</option></select><button id="resetView">전체 보기</button></div>
   <div id="paneAge" role="tabpanel">

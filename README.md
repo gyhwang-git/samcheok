@@ -1,6 +1,6 @@
 # Samcheok
 
-삼척시 건물 노후도·용도와 도시공간구조 변화를 지도로 분석한 프로젝트입니다.
+**삼척시 공간구조 변화 분석** — 건축물 사용승인연도·용도와 인구·사업체 통계로 삼척시 시가지의 형성과 축소, 중심지 이동을 시기별로 분석한 웹 지도입니다.
 
 - 웹 지도: https://gyhwang-git.github.io/samcheok/ (탭: 노후도 · 건물 용도 · 감자도 · 공간구조도 · 도시형태 · 도시형태2 · 도시형태3 · 변화 유형)
 - 보고서: [reports/building_age_analysis.md](reports/building_age_analysis.md), [reports/building_use_analysis.md](reports/building_use_analysis.md), [reports/urban_change_types.md](reports/urban_change_types.md)
