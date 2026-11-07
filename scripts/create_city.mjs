@@ -16,6 +16,7 @@ const rawDir = path.join(projectDir, 'data', 'raw', C.slug), reportDir = path.jo
 const rows = JSON.parse(await fs.readFile(path.join(rawDir, C.slug + '_buildings_points.json'), 'utf8')).rows;
 const { units, pop } = await C.load(rawDir);
 const result = computeCity(rows, units, pop, C);
+result.notes = C.notes ? C.notes(result) : null;
 const sw = SWITCH.map(([n, f]) => '<a href="' + f + '"' + (n === C.short ? ' aria-current="page"' : '') + '>' + n + '</a>').join('');
 result.classes = PLAN_CLASSES.map(({ key, label, color }) => ({ key, label, color }));
 const env = await fs.readFile(path.resolve(projectDir, '..', '.env'), 'utf8').catch(() => '');
@@ -48,11 +49,12 @@ const html = String.raw`<!doctype html>
   <nav class="citysw" aria-label="도시 선택">${sw}</nav>
   <div class="eyebrow">${C.eyebrow}</div><h1>${C.name} 공간구조 변화 분석</h1><p class="sub">주민등록인구의 전환점으로 나눈 세 시기에 따라, 건축물 사용승인연도와 ${C.unitLabel} 인구 변화로 ${C.short} 시가지의 성장과 축소를 살펴봅니다. 삼척 '도시형태3' 탭과 같은 기준입니다.</p><span class="badge">분석 기준일 · 2026.11.04</span>
   <div class="controls" style="grid-template-columns:auto 1fr"><label for="basemap">배경</label><select id="basemap"><option value="light">밝은 지도</option><option value="voyager">기본 지도</option><option value="dark">어두운 지도</option><option value="none">없음</option></select><button id="resetView">전체 보기</button></div>
-  <h2>${C.short} 도시축소 3단계 (${C.periods[1].start}년·${C.periods[2].start}년 기점)</h2>
+  <h2>${C.short} 도시축소 3단계 (${C.split} 기점)</h2>
   <div class="eras" id="pBtns" role="group" aria-label="시기" style="grid-template-columns:repeat(3,1fr)"></div>
   <div class="chips" id="chips" role="group" aria-label="표시 요소"></div>
   <section id="head"></section>
   <h2>연표</h2><ul class="tl" id="tl"></ul>
+  <div id="nBox"><h2>지도 주석</h2><ul class="notes" id="nList"></ul><p class="chartnote">번호는 지도의 번호와 같습니다. 항목을 누르면 지도가 그 위치로 이동합니다.</p></div>
   <h2 id="dH">${C.unitLabel} 인구 변화</h2><ul class="dl" id="dList"></ul>
   <p class="chartnote">행을 누르면 지도가 그 ${C.unitLabel}으로 이동합니다.</p>
   <h2>시기별 신축 건물 — 지역 분포</h2><div class="chart" id="reg"></div><div class="keys" id="regKeys" style="margin-left:0"></div>
@@ -89,7 +91,10 @@ for(const k in D.periods){const p=D.periods[k];for(const n of ['housing','indust
 for(const d of D.districts){d.m=LL(d.at);d.mr=d.rings.map(r=>r.map(LL));let x0=1,x1=0;for(const r of d.mr)for(const q of r){if(q[0]<x0)x0=q[0];if(q[0]>x1)x1=q[0];}d.mw=x1-x0;}
 for(const c of D.grid){c.m=LL(c);}
 const b=window.__BOUNDS,B=[mx(b[0]),my(b[3]),mx(b[2]),my(b[1])],cx=(B[0]+B[2])/2,cy=(B[1]+B[3])/2;let zoom=1,panX=0,panY=0,baseScale=1,drag=null,last=null,pi=2;
-const L={dpop:true,area:true,bld:true,label:true};
+const L={dpop:true,area:true,bld:true,label:true,notes:!!D.notes};
+const NC={core:'#1f5f86',shrink:'#c2410c',grow:'#15803d'};
+if(D.notes)for(const k in D.notes)D.notes[k].forEach((x,i)=>{x.no=i+1;if(x.at)x.m=LL(x.at);if(x.from){x.fm=LL(x.from);x.tm=LL(x.to);}});
+if(!D.notes)document.getElementById('nBox').hidden=true;
 function off(){if(document.body.classList.contains('collapsed'))return{x:0,y:0};return innerWidth>760?{x:panel.offsetWidth+24,y:0}:{x:0,y:panel.offsetHeight+16};}
 function resize(){const r=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1;canvas.width=Math.round(r.width*dpr);canvas.height=Math.round(r.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);const o=off();baseScale=Math.min((r.width-o.x-60)/(B[2]-B[0]),(r.height-o.y-60)/(B[3]-B[1]));draw();}
 function fit(){const o=off();zoom=1;panX=o.x/2;panY=-o.y/2;resize();}
@@ -109,13 +114,21 @@ function draw(){const r=canvas.getBoundingClientRect(),w=r.width,h=r.height,S=ba
   if(L.area){rings(P.newAreaM,S,ox,oy);ctx.lineWidth=4;ctx.strokeStyle='#fff';ctx.stroke();ctx.lineWidth=2;ctx.strokeStyle=pc;ctx.stroke();}
   ctx.lineWidth=1.1;ctx.strokeStyle='rgba(46,43,79,.55)';for(const d of D.districts){rings(d.mr,S,ox,oy);ctx.stroke();}
   if(L.label){ctx.textAlign='center';ctx.textBaseline='middle';for(const d of D.districts){if(d.mw*S<44)continue;const x=ox+d.m[0]*S,y=oy+d.m[1]*S;const v=P.dpop&&P.dpop[d.cd];label(d.name,x,y-(v?7:0),true);if(v)label(fp(v.chg),x,y+8,false,v.chg<0?'#9a3412':'#166534');}}
+  if(L.notes&&D.notes){const N=D.notes[M.key]||[],mpw=40075016.7*Math.cos(D.lat*Math.PI/180),P2=m=>[ox+m[0]*S,oy+m[1]*S];
+    const arrow=(A,Bp,col,wd,dash)=>{const ang=Math.atan2(Bp[1]-A[1],Bp[0]-A[0]),hl=Math.min(18,Math.hypot(Bp[0]-A[0],Bp[1]-A[1])*.4),E=[Bp[0]-Math.cos(ang)*hl*.8,Bp[1]-Math.sin(ang)*hl*.8];ctx.setLineDash(dash||[]);ctx.beginPath();ctx.moveTo(A[0],A[1]);ctx.lineTo(E[0],E[1]);ctx.lineWidth=wd;ctx.strokeStyle=col;ctx.lineCap='round';ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(Bp[0],Bp[1]);ctx.lineTo(Bp[0]-Math.cos(ang-.45)*hl,Bp[1]-Math.sin(ang-.45)*hl);ctx.lineTo(Bp[0]-Math.cos(ang+.45)*hl,Bp[1]-Math.sin(ang+.45)*hl);ctx.closePath();ctx.fillStyle=col;ctx.fill();};
+    for(const x of N){if(!x.r||!x.m)continue;const p=P2(x.m),rr=Math.max(14,x.r*S/mpw),col=NC[x.kind]||pc;ctx.beginPath();ctx.arc(p[0],p[1],rr,0,Math.PI*2);ctx.globalAlpha=.12;ctx.fillStyle=col;ctx.fill();ctx.globalAlpha=1;ctx.setLineDash(x.kind==='shrink'?[7,5]:[]);ctx.lineWidth=2.6;ctx.strokeStyle=col;ctx.stroke();ctx.setLineDash([]);
+      if(x.kind==='shrink'||x.kind==='grow'){const s2=x.kind==='grow'?1:-1,L2=Math.min(16,rr*.35);for(const a of [0,Math.PI/2,Math.PI,Math.PI*1.5])arrow([p[0]+Math.cos(a)*rr,p[1]+Math.sin(a)*rr],[p[0]+Math.cos(a)*(rr+s2*L2),p[1]+Math.sin(a)*(rr+s2*L2)],col,2.4);}}
+    for(const x of N){if(x.kind==='arrow')arrow(P2(x.fm),P2(x.tm),pc,4.5);if(x.kind==='edge'){const p=P2(x.m);ctx.beginPath();ctx.arc(p[0],p[1],16,0,Math.PI*2);ctx.setLineDash([4,4]);ctx.lineWidth=2;ctx.strokeStyle='#7c3aed';ctx.stroke();ctx.setLineDash([]);}}
+    for(const x of N){const p=x.kind==='arrow'?P2([(x.fm[0]*.35+x.tm[0]*.65),(x.fm[1]*.35+x.tm[1]*.65)]):P2(x.m),col=x.kind==='edge'?'#7c3aed':NC[x.kind]||pc;
+      ctx.beginPath();ctx.arc(p[0],p[1],10,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#fff';ctx.stroke();ctx.fillStyle='#fff';ctx.font='800 11px Inter,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(String(x.no),p[0],p[1]+.5);ctx.textAlign='left';label(x.title,p[0]+14,p[1],true);}}
   document.getElementById('mapnote').textContent=D.cfg.name+' · '+M.label+' '+M.range+' '+M.title+' · 건물 '+fmt(D.n)+'동(100m 격자) · 배경 © OpenStreetMap contributors © CARTO';}
 window.__redraw=draw;
 function legend(){const el=document.getElementById('legend'),M=D.meta[pi],add=h=>{const e=document.createElement('span');e.innerHTML=h;el.append(e);};el.innerHTML='';
   add('<i class="swatch" style="background:#cfaea6"></i>주거지역(누적)');add('<i class="swatch" style="background:#7d82a6"></i>산업지역(누적)');add('<i class="swatch" style="background:transparent;border:2px solid '+M.color+'"></i>해당 시기 신규 시가지');add('<i class="swatch" style="background:'+M.color+'"></i>해당 시기 신축');add('<i class="swatch" style="background:#5b5870"></i>이전 건물');
+  if(L.notes&&D.notes){add('<i class="ell-key" style="border-color:#1f5f86;border-style:solid"></i>중심(핵)');add('<i class="ell-key" style="border-color:#c2410c"></i>축소');add('<i class="ell-key" style="border-color:#15803d;border-style:solid"></i>성장·집중');add('<i class="axis-key" style="border-top-color:'+M.color+'"></i>확산·이동');add('<i class="ell-key" style="border-color:#7c3aed"></i>행정 변화');}
   if(D.periods[M.key].dpop){add('<i class="swatch" style="background:rgba(180,83,9,.5)"></i>'+U+' 인구 감소');add('<i class="swatch" style="background:rgba(21,128,61,.5)"></i>'+U+' 인구 증가');}}
 const pB=document.getElementById('pBtns');D.meta.forEach((m,i)=>{const bt=document.createElement('button');bt.innerHTML=m.label+' · '+m.range+'<br><small style="font-weight:600">'+m.title+'</small>';bt.dataset.i=i;bt.addEventListener('click',()=>{pi=i;render();draw();});pB.append(bt);});
-const ch=document.getElementById('chips');for(const [k,l] of [['dpop',U+' 인구 증감'],['area','시가지 윤곽'],['bld','건물'],['label',U+' 이름']]){const bt=document.createElement('button');bt.textContent=l;bt.setAttribute('aria-pressed','true');bt.addEventListener('click',()=>{L[k]=!L[k];bt.setAttribute('aria-pressed',String(L[k]));draw();});ch.append(bt);}
+const ch=document.getElementById('chips');for(const [k,l] of [...(D.notes?[['notes','지도 주석']]:[]),['dpop',U+' 인구 증감'],['area','시가지 윤곽'],['bld','건물'],['label',U+' 이름']]){const bt=document.createElement('button');bt.textContent=l;bt.setAttribute('aria-pressed','true');bt.addEventListener('click',()=>{L[k]=!L[k];bt.setAttribute('aria-pressed',String(L[k]));legend();draw();});ch.append(bt);}
 function render(){
   for(const bt of pB.children)bt.setAttribute('aria-pressed',String(+bt.dataset.i===pi));
   const M=D.meta[pi],P=D.periods[M.key],pct=(a,b)=>b?(a/b*100).toFixed(1)+'%':'–',popChg=(P.pop.to-P.pop.from)/P.pop.from*100;
@@ -125,6 +138,9 @@ function render(){
     space='인구 증가 '+up.length+'곳'+(up.length?' ('+up.slice(0,3).map(a=>a.name+' '+fp(a.chg)).join(', ')+')':'')+', 감소 '+dn.length+'곳 (최대 '+dn.slice(0,3).map(a=>a.name+' '+fp(a.chg)).join(', ')+')';}
   else space=U+'별 인구 자료가 없는 시기라 건물 자료로만 표시합니다. 이 시기 신축은 '+D.regions[topReg].label+'에 가장 많습니다.';
   document.getElementById('head').innerHTML='<article class="metric" style="border-left:5px solid '+M.color+'"><div class="k">'+M.label+' · '+M.range+'</div><strong class="txt">'+esc(M.title)+'</strong></article><div class="sum3"><b>인구</b> '+(P.pop.from/1e4).toFixed(1)+'만 → '+(P.pop.to/1e4).toFixed(1)+'만 명 ('+P.pop.fromY+'~'+P.pop.toY+', '+fp(popChg)+')<br><b>공간</b> '+esc(space)+'<br><b>신축 건물(현존, 승인 기준)</b> '+fmt(P.n)+'동 · 5층 이상 '+pct(P.five,P.n)+' · 최다 지역 '+esc(D.regions[topReg].label)+' '+pct(P.reg[topReg],regT)+'</div>';
+  if(D.notes){const SRC={'건물':'건물 데이터','KOSIS':'KOSIS 인구','KOSIS·건물':'KOSIS 인구·건물','건물·KOSIS':'건물·KOSIS 인구','일반':'행정 변화'};const ul=document.getElementById('nList');ul.innerHTML='';
+    for(const x of D.notes[M.key]||[]){const col=x.kind==='edge'?'#7c3aed':NC[x.kind]||M.color,li=document.createElement('li');li.tabIndex=0;li.innerHTML='<i class="num-key" style="background:'+col+'">'+x.no+'</i><span><b>'+esc(x.title)+'</b><br>'+esc(x.text)+' <small>— '+(SRC[x.src]||esc(x.src))+'</small></span>';
+      const go=()=>goTo(x.m||[(x.fm[0]+x.tm[0])/2,(x.fm[1]+x.tm[1])/2],Math.max(zoom,4));li.addEventListener('click',go);li.addEventListener('keydown',e=>{if(e.key==='Enter')go();});ul.append(li);}}
   document.getElementById('tl').innerHTML=D.timeline[M.key].map(([y,t])=>'<li><b style="color:'+M.color+'">'+esc(y)+'</b><span>'+esc(t)+'</span></li>').join('');
   const dl=document.getElementById('dList');dl.innerHTML='';document.getElementById('dH').textContent=P.dpop?U+' 인구 변화 ('+D.meta[pi].unitFrom+'→'+D.meta[pi].unitTo+')':U+'별 신축 건물 ('+M.range+')';
   const items=D.districts.map(d=>({d,v:P.dpop?P.dpop[d.cd]:null,n:P.dnew[d.cd]})).sort((a,b)=>P.dpop?((b.v?b.v.chg:-1e9)-(a.v?a.v.chg:-1e9)):b.n-a.n);const maxAbs=Math.max(...items.map(it=>P.dpop?Math.abs(it.v?it.v.chg:0):it.n));

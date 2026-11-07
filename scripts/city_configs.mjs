@@ -1,10 +1,11 @@
 // 도시별 분석 설정. 시기 경계는 주민등록인구(KOSIS DT_1B040A3)의 전환점으로 정했다(삼척 도시형태3 기준과 같은 방식).
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { busanNotes } from './city_notes.mjs';
 
 export const CITIES = {
   busan: {
-    slug: 'busan', name: '부산광역시', short: '부산', eyebrow: 'Busan · Urban spatial change', unitLabel: '구·군',
+    slug: 'busan', name: '부산광역시', short: '부산', split: '1995년·2015년', eyebrow: 'Busan · Urban spatial change', unitLabel: '구·군',
     periods: [
       { key: 'q1', label: '1기', range: '1963–1995', title: '성장·정점기', start: 1963, end: 1995, color: '#1f5f86', popFrom: 1992, popTo: 1995 },
       { key: 'q2', label: '2기', range: '1996–2015', title: '감소·외곽 확산기', start: 1996, end: 2015, color: '#3a8bb0', popFrom: 1995, popTo: 2015, unitFrom: 1995, unitTo: 2015 },
@@ -23,6 +24,7 @@ export const CITIES = {
     ],
     basis: '부산 주민등록인구는 1995년(3,883,880명)이 정점이고, 1995~2015년에는 연평균 약 1.9만 명, 2015~2025년에는 연평균 약 2.7만 명씩 줄어 2015년을 감소 가속의 기점으로 보았습니다. 1기 시작은 직할시 승격(1963)입니다.',
     regionText: '원도심=중·서·동·영도, 동부산=해운대·기장, 서부산=강서, 그 밖은 기성 시가지.',
+    notes: busanNotes,
     limits: '구·군 경계는 현재 기준이며, 강서구(1989)·기장군(1995) 편입 전 시기도 같은 경계로 집계했습니다. 구·군 인구는 1995년부터 있어 1기는 표시하지 않습니다.',
     async load(dir) {
       const pop = JSON.parse(await fs.readFile(path.join(dir, 'busan_population_kosis.json'), 'utf8'));
@@ -31,7 +33,7 @@ export const CITIES = {
     },
   },
   yeosu: {
-    slug: 'yeosu', name: '여수시', short: '여수', eyebrow: 'Yeosu · Urban spatial change', unitLabel: '읍면동', unitSimplify: 0.0003,
+    slug: 'yeosu', name: '여수시', short: '여수', split: '1998년·2010년', eyebrow: 'Yeosu · Urban spatial change', unitLabel: '읍면동', unitSimplify: 0.0003,
     fitBox: [127.56, 34.6, 127.8, 34.92], // 첫 화면: 시가지·돌산·화양 (삼산면 거문도 등 먼 섬 제외)
     thresholds: { housing: 1.5, industry: 0.5, newArea: 1.0 },
     periods: [

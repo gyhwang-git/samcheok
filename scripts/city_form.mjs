@@ -59,7 +59,7 @@ export function computeCity(rows, units, pop, cfg) {
   const uY = pop.unitYears;
   const popAt = (cd, y) => { const i = uY.indexOf(y); return i < 0 ? null : pop.units[cd]?.pop[i] ?? null; };
   const centroidOf = (d) => { let best = null, area = -1; for (const p of d.polys) { const a = ringArea(p[0]); if (a > area) { area = a; best = p[0]; } } let sx = 0, sy = 0; for (const [x, y] of best) { sx += x; sy += y; } return [Number((sx / best.length).toFixed(5)), Number((sy / best.length).toFixed(5))]; };
-  const dInfo = us.map((d) => ({ cd: d.cd, name: d.name, at: centroidOf(d), region: regionOf[d.cd] ?? null, rings: d.polys.map((p) => simplify(p[0], cfg.unitSimplify ?? 0.0006).map(([x, y]) => [Number(x.toFixed(5)), Number(y.toFixed(5))])).filter((r) => r.length >= 4) }));
+  const dInfo = us.map((d) => ({ cd: d.cd, name: d.name, at: centroidOf(d), region: regionOf[d.cd] ?? null, ha: Math.round(d.polys.reduce((s, p) => s + ringArea(p[0]), 0) * kx * ky / 10000), rings: d.polys.map((p) => simplify(p[0], cfg.unitSimplify ?? 0.0006).map(([x, y]) => [Number(x.toFixed(5)), Number(y.toFixed(5))])).filter((r) => r.length >= 4) }));
 
   const periods = {};
   for (const Pd of P) {
@@ -68,9 +68,13 @@ export function computeCity(rows, units, pop, cfg) {
     const mix = PLAN_CLASSES.map(() => 0); for (const p of inP) if (p.cls >= 0) mix[p.cls]++;
     const dpop = Pd.unitFrom == null ? null : Object.fromEntries(dInfo.map((d) => { const a = popAt(d.cd, Pd.unitFrom), b = popAt(d.cd, Pd.unitTo); return [d.cd, a && b ? { from: a, to: b, chg: ((b - a) / a) * 100 } : null]; }));
     const dnew = Object.fromEntries(dInfo.map((d) => [d.cd, inP.filter((p) => p.u === d.cd).length]));
+    // 단위 지역별 이 시기 신축·산업 건물의 중심 위치(지도 주석 배치용)
+    const ustat = {};
+    for (const p of inP) { if (!p.u) continue; const o = (ustat[p.u] ??= { n: 0, sx: 0, sy: 0, ind: 0, ix: 0, iy: 0, apt: 0 }); o.n++; o.sx += p.lon; o.sy += p.lat; if (kind(p) === 'industry') { o.ind++; o.ix += p.lon; o.iy += p.lat; } if (p.fl >= 5) o.apt++; }
+    const uNew = Object.fromEntries(Object.entries(ustat).map(([cd, o]) => [cd, { n: o.n, at: [Number((o.sx / o.n).toFixed(5)), Number((o.sy / o.n).toFixed(5))], ind: o.ind, indAt: o.ind ? [Number((o.ix / o.ind).toFixed(5)), Number((o.iy / o.ind).toFixed(5))] : null, five: o.apt }]));
     periods[Pd.key] = {
       housing: blob(cum.filter((p) => kind(p) === 'housing'), T.housing ?? 2.2, 2), industry: blob(cum.filter((p) => kind(p) === 'industry'), T.industry ?? 0.6, 2), newArea: blob(inP.filter((p) => kind(p)), T.newArea ?? 1.6, 2),
-      n: inP.length, cumN: cum.length, reg, mix, five: inP.filter((p) => p.fl >= 5).length, dpop, dnew,
+      n: inP.length, cumN: cum.length, reg, mix, five: inP.filter((p) => p.fl >= 5).length, dpop, dnew, uNew,
       pop: { from: pop.total[Pd.popFrom], to: pop.total[Pd.popTo], fromY: Pd.popFrom, toY: Pd.popTo },
     };
   }
