@@ -243,6 +243,8 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
     bx.setTransform(dpr,0,0,dpr,0,0);bx.clearRect(0,0,w,h);const st=STYLES[sel.value];bc.style.background=sel.value==='dark'?'#262626':'#eef2f6';if(!st)return;const {cx,cy,S,panX,panY}=view;
     const z=Math.max(6,Math.min(MAXZ,Math.round(Math.log2(S/256)))),n=2**z,ts=S/n;
     const tx0=Math.floor((cx+(-w/2-panX)/S)*n),tx1=Math.floor((cx+(w/2-panX)/S)*n),ty0=Math.max(0,Math.floor((cy+(-h/2-panY)/S)*n)),ty1=Math.min(n-1,Math.floor((cy+(h/2-panY)/S)*n));
+    // 안전장치: 화면 크기 계산 전(축척=1) 등 비정상 보기에서는 타일 수가 수백만 개가 되어 페이지가 멈춤 → 그리지 않음
+    if(!(S>256)||!isFinite(tx0+tx1+ty0+ty1)||(tx1-tx0+1)*(ty1-ty0+1)>400)return;
     const list=[];for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++)list.push([tx,ty]);const cxT=(tx0+tx1)/2,cyT=(ty0+ty1)/2;list.sort((p,q)=>Math.hypot(p[0]-cxT,p[1]-cyT)-Math.hypot(q[0]-cxT,q[1]-cyT));
     for(const [tx,ty] of list){const xx=((tx%n)+n)%n,sx=w/2+(tx/n-cx)*S+panX,sy=h/2+(ty/n-cy)*S+panY,t=getTile(st,z,xx,ty);
       if(ready(t)){bx.drawImage(t,sx,sy,ts+.5,ts+.5);continue;}
