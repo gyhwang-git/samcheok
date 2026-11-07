@@ -161,15 +161,17 @@ function contours(v, nx, ny, t) {
 }
 
 // points: [{ lon, lat, cls, year }] (year 없으면 null)
-export function computePotato(points) {
+export function computePotato(points, opts = {}) { // opts.structureOnly: 감자도 장면을 건너뛰고 공간구조도만 계산(대도시용)
   const lat0 = points.reduce((s, p) => s + p.lat, 0) / points.length;
   const lon0 = points.reduce((s, p) => s + p.lon, 0) / points.length;
   const kx = Math.cos((lat0 * Math.PI) / 180) * 111320, ky = 110540;
   const P = points.map((p) => ({ ...p, x: (p.lon - lon0) * kx, y: (p.lat - lat0) * ky }));
   const pad = Math.max(SIGMA, STRUCT_SIGMA) * 4;
-  const x0 = Math.min(...P.map((p) => p.x)) - pad, y0 = Math.min(...P.map((p) => p.y)) - pad;
-  const nx = Math.ceil((Math.max(...P.map((p) => p.x)) + pad - x0) / CELL) + 1;
-  const ny = Math.ceil((Math.max(...P.map((p) => p.y)) + pad - y0) / CELL) + 1;
+  let mnX = Infinity, mnY = Infinity, mxX = -Infinity, mxY = -Infinity; // 대량 점에서 Math.min(...arr) 호출 스택 초과 방지
+  for (const p of P) { if (p.x < mnX) mnX = p.x; if (p.y < mnY) mnY = p.y; if (p.x > mxX) mxX = p.x; if (p.y > mxY) mxY = p.y; }
+  const x0 = mnX - pad, y0 = mnY - pad;
+  const nx = Math.ceil((mxX + pad - x0) / CELL) + 1;
+  const ny = Math.ceil((mxY + pad - y0) / CELL) + 1;
   function makeKernel(sigma) {
     const R = Math.ceil((sigma * 3) / CELL), k = [];
     const norm = 10000 / (2 * Math.PI * sigma * sigma); // 건물/ha
@@ -184,11 +186,11 @@ export function computePotato(points) {
   const toLonLat = (gx, gy) => [Number((lon0 + (x0 + gx * CELL) / kx).toFixed(5)), Number((lat0 + (y0 + gy * CELL) / ky).toFixed(5))];
 
   function surface(pts, K = kernel) {
+    // 같은 칸의 점을 먼저 모아 커널을 칸 단위로 더함(결과 동일, 대도시에서 훨씬 빠름)
+    const cnt = new Map();
+    for (const p of pts) { const k = Math.round((p.y - y0) / CELL) * nx + Math.round((p.x - x0) / CELL); cnt.set(k, (cnt.get(k) ?? 0) + 1); }
     const v = new Float32Array(nx * ny);
-    for (const p of pts) {
-      const ci = Math.round((p.x - x0) / CELL), cj = Math.round((p.y - y0) / CELL);
-      for (const [di, dj, w] of K) v[(cj + dj) * nx + ci + di] += w;
-    }
+    for (const [k, c] of cnt) { const ci = k % nx, cj = (k - ci) / nx; for (const [di, dj, w] of K) v[(cj + dj) * nx + ci + di] += w * c; }
     return v;
   }
   const haOf = (r) => ringArea(r) * CELL * CELL / 10000;
@@ -279,11 +281,11 @@ export function computePotato(points) {
 
   const scenes = {};
   const add = (key, subset, scale = 1) => { scenes[key] = tessellate(subset, scale); };
-  for (const e of ERAS) {
+  if (!opts.structureOnly) for (const e of ERAS) {
     add(`cum:${e.key}`, P.filter((p) => p.year != null && p.year <= e.end));
     add(`new:${e.key}`, P.filter((p) => p.year != null && p.year >= e.start && p.year <= e.end), NEW_SCALE);
   }
-  add('all', P);
+  if (!opts.structureOnly) add('all', P);
 
   // 중심지: 상업+공공 밀도(누적·현재) 상위 국지 최댓값
   const centersFor = (subset) => {
@@ -302,8 +304,8 @@ export function computePotato(points) {
     return peaks.sort((a, b) => b.density - a.density).slice(0, 6);
   };
   const centers = {};
-  for (const e of ERAS) centers[`cum:${e.key}`] = centersFor(P.filter((p) => p.year != null && p.year <= e.end));
-  centers.all = centersFor(P);
+  if (!opts.structureOnly) for (const e of ERAS) centers[`cum:${e.key}`] = centersFor(P.filter((p) => p.year != null && p.year <= e.end));
+  if (!opts.structureOnly) centers.all = centersFor(P);
 
   const K450 = makeKernel(STRUCT_SIGMA), KZ = makeKernel(STRUCT_ZONE_SIGMA);
   // S: 장면에 쓰는 건물, arrowSplit: [이전 건물 마지막 연도, 신규 건물 첫 연도] (없으면 확산 방향 생략)
@@ -314,7 +316,7 @@ export function computePotato(points) {
     // 겹침 허용이라 경쟁 없이 퍼지는 희소 용도는 임계값을 올리고, 저밀주거지는 조금 넓게(시가지 윤곽이 드러나도록)
     const TS = { det: 0.9, row: 1.8, apt: 1.5, edu: 1.6, gov: 2.2, com: 1.3, ind: 1.2 };
     // 용도별로 따로 권역을 구해 겹침 허용(반투명으로 표시), 용도별 한 덩어리, 약한 다듬기 → 아메바형 불규칙 윤곽
-    const zoneOpts = { kernel: KZ, blur: 1, minHa: 3, single: true, simplifyTol: 0.45, chaikin: 3, thresholdScale: PLAN_CLASSES.map((c) => TS[c.key] ?? 1) };
+    const zoneOpts = { kernel: KZ, blur: 1, minHa: opts.zoneMinHa ?? 3, single: true, simplifyTol: opts.zoneSimplify ?? 0.45, chaikin: opts.zoneChaikin ?? 3, thresholdScale: PLAN_CLASSES.map((c) => TS[c.key] ?? 1) };
     const zones = PLAN_CLASSES.map((c, ci) => tessellate(S.filter((p) => p.cls === ci), STRUCT_SCALE, zoneOpts)[ci]);
     const cv = surface(S.filter((p) => CENTER_KEYS.includes(PLAN_CLASSES[p.cls].key)), K);
     const peaks = [];
@@ -322,7 +324,8 @@ export function computePotato(points) {
       const c = cv[j * nx + i];
       if (c < 0.15) continue;
       let isMax = true;
-      for (let dj = -15; dj <= 15 && isMax; dj++) for (let di = -15; di <= 15; di++) {
+      const PR = opts.peakR ?? 15; // 정점 간 최소 간격(칸)
+      for (let dj = -PR; dj <= PR && isMax; dj++) for (let di = -PR; di <= PR; di++) {
         const ii = i + di, jj = j + dj;
         if ((di || dj) && ii >= 0 && jj >= 0 && ii < nx && jj < ny && cv[jj * nx + ii] > c) { isMax = false; break; }
       }
@@ -347,14 +350,14 @@ export function computePotato(points) {
       if (m) return m[1] + suffix;
       return n.replace(/(출장소|사무소).*$/, '') + suffix;
     };
-    let centers = peaks.map((c) => { const pts = near(c, STRUCT_CATCH_M); const mix = PLAN_CLASSES.map(() => 0); for (const p of pts) mix[p.cls]++; return { ...c, n: pts.length, mix }; })
-      .filter((c) => c.n >= 150).sort((a, b) => b.n - a.n).slice(0, 12);
+    let centers = peaks.map((c) => { const pts = near(c, opts.catchM ?? STRUCT_CATCH_M); const mix = PLAN_CLASSES.map(() => 0); for (const p of pts) mix[p.cls]++; return { ...c, n: pts.length, mix }; })
+      .filter((c) => c.n >= 150).sort((a, b) => b.n - a.n).slice(0, opts.maxCenters ?? 12);
     if (!centers.length) return { zones, centers: [], axes: [], arrows: [], n: S.length };
     const top = centers[0];
     centers.forEach((c, i) => {
       const dTop = Math.hypot(c.x - top.x, c.y - top.y);
-      c.level = i === 0 ? 0 : c.n >= top.n * 0.2 ? (dTop > 5000 ? 1 : 2) : 3; // 0 도심, 1 지역중심, 2 부도심, 3 생활권중심
-      c.name = i === 0 ? '삼척 도심' : placeName(c) ?? '중심지 ' + (i + 1);
+      c.level = i === 0 ? 0 : c.n >= top.n * (opts.levelRatio ?? 0.2) ? (dTop > (opts.regionalM ?? 5000) ? 1 : 2) : 3; // 0 도심, 1 지역중심, 2 부도심, 3 생활권중심
+      c.name = i === 0 && opts.topName !== null ? (opts.topName ?? '삼척 도심') : placeName(c) ?? '중심지 ' + (i + 1);
       const nonDet = c.mix.map((v, k) => [k, v]).filter(([k]) => PLAN_CLASSES[k].key !== 'det').sort((a, b) => b[1] - a[1]);
       c.dominant = c.mix.indexOf(Math.max(...c.mix));
       c.feature = nonDet[0][0]; // 단독주택 다음으로 많은 기능
@@ -405,10 +408,12 @@ export function computePotato(points) {
     };
   };
   const structure = { scenes: {}, method: { sigmaM: STRUCT_SIGMA, scale: STRUCT_SCALE, catchM: STRUCT_CATCH_M } };
-  ERAS.forEach((e, i) => {
-    structure.scenes['cum:' + e.key] = structureFor(P.filter((p) => p.year != null && p.year <= e.end), i > 0 ? [ERAS[i - 1].end, e.start] : null);
+  const SE = opts.eras ?? ERAS; // 도시별 시기(예: 도시축소 3단계)로 바꿀 수 있음
+  SE.forEach((e, i) => {
+    structure.scenes['cum:' + e.key] = structureFor(P.filter((p) => p.year != null && p.year <= e.end), i > 0 ? [SE[i - 1].end, e.start] : null);
   });
-  structure.scenes.all = structureFor(P, [1989, 2000]);
+  structure.scenes.all = structureFor(P, opts.allSplit ?? [1989, 2000]);
+  structure.eras = SE.map(({ key, label, start, end }) => ({ key, label, start, end }));
 
   return {
     structure,

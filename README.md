@@ -2,7 +2,7 @@
 
 **삼척시 공간구조 변화 분석** — 건축물 사용승인연도·용도와 인구·사업체 통계로 삼척시 시가지의 형성과 축소, 중심지 이동을 시기별로 분석한 웹 지도입니다.
 
-- 도시 비교(삼척 도시형태3 기준 3단계 분석, 페이지 상단 삼척/부산/여수 전환)
+- 도시 비교(삼척 도시형태3 기준 3단계 분석 + 지도 주석, 삼척 공간구조도 방식의 공간구조도 탭, 페이지 상단 삼척/부산/여수 전환)
   - 부산: https://gyhwang-git.github.io/samcheok/reports/busan.html
   - 여수: https://gyhwang-git.github.io/samcheok/reports/yeosu.html
 - 웹 지도: https://gyhwang-git.github.io/samcheok/ (탭: 노후도 · 건물 용도 · 감자도 · 공간구조도 · 도시형태 · 도시형태2 · 도시형태3 · 변화 유형)

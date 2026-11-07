@@ -5,7 +5,9 @@ import { busanNotes } from './city_notes.mjs';
 
 export const CITIES = {
   busan: {
-    slug: 'busan', name: '부산광역시', short: '부산', split: '1995년·2015년', eyebrow: 'Busan · Urban spatial change', unitLabel: '구·군',
+    slug: 'busan', name: '부산광역시', short: '부산', split: '1995년·2015년',
+    eyebrow: 'Busan · Urban spatial change', unitLabel: '구·군',
+    structOpts: { peakR: 25, maxCenters: 20, catchM: 3000, levelRatio: 0.55, regionalM: 8000 }, // 대도시: 중심지 간격·개수·위계 기준 조정,
     periods: [
       { key: 'q1', label: '1기', range: '1963–1995', title: '성장·정점기', start: 1963, end: 1995, color: '#1f5f86', popFrom: 1992, popTo: 1995 },
       { key: 'q2', label: '2기', range: '1996–2015', title: '감소·외곽 확산기', start: 1996, end: 2015, color: '#3a8bb0', popFrom: 1995, popTo: 2015, unitFrom: 1995, unitTo: 2015 },

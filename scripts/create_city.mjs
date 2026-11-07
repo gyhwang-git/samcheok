@@ -7,7 +7,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { computeCity } from './city_form.mjs';
 import { CITIES, SWITCH } from './city_configs.mjs';
-import { PLAN_CLASSES } from './potato_plan.mjs';
+import { PLAN_CLASSES, computePotato, classifyPlan } from './potato_plan.mjs';
+import { ageFor } from './building_use.mjs';
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const C = CITIES[process.argv[2] ?? 'busan'];
@@ -17,6 +18,32 @@ const rows = JSON.parse(await fs.readFile(path.join(rawDir, C.slug + '_buildings
 const { units, pop } = await C.load(rawDir);
 const result = computeCity(rows, units, pop, C);
 result.notes = C.notes ? C.notes(result) : null;
+// 공간구조도(삼척 '공간구조도' 탭과 같은 방법): 시기는 이 도시의 3단계 말 기준 누적 + 현재 전체
+const spts = [];
+for (const [lon, lat, apr, code, fl, nm] of rows) { const cls = classifyPlan({ usability: code, bld_nm: nm, grnd_flr: fl }); if (cls < 0) continue; spts.push({ lon, lat, cls, name: nm, year: ageFor(apr) == null ? null : Number(String(apr).slice(0, 4)) }); }
+const sres = computePotato(spts, { structureOnly: true, topName: null, eras: C.periods.map((p) => ({ key: p.key, label: p.label + ' ' + p.range + ' 말까지', start: p.start, end: p.end })), allSplit: [C.periods[1].end, C.periods[2].start], zoneSimplify: 0.8, zoneChaikin: 2, zoneMinHa: 5, ...(C.structOpts ?? {}) });
+// 중심지 이름: 위치한 단위 지역으로 다시 붙임(부산 '구 + 동 사무소명', 여수 '읍면동')
+const inR = (x, y, r) => { let k = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const [xi, yi] = r[i], [xj, yj] = r[j]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) k = !k; } return k; };
+const unitAt = ([x, y]) => result.districts.find((d) => d.rings.some((r) => inR(x, y, r)));
+// 가장 가까운 읍면동 사무소(행정복지센터·주민센터) 이름 — 건물명에서 찾음
+const OFF = /([가-힣]+[0-9·]*(?:동|읍|면))\s*(?:행정복지센터|주민센터|사무소)/;
+const offices = []; for (const r of rows) { const m = String(r[5]).match(OFF); if (m) offices.push([r[0], r[1], m[1]]); }
+const kxm = Math.cos((result.lat * Math.PI) / 180) * 111320;
+const nearOffice = ([x, y]) => { let best = null, bd = 1800 ** 2; for (const [ox, oy, nm] of offices) { const d = ((ox - x) * kxm) ** 2 + ((oy - y) * 110540) ** 2; if (d < bd) { bd = d; best = nm; } } return best; };
+for (const sc of Object.values(sres.structure.scenes)) {
+  const seen = {}, ren = {};
+  for (const ctr of sc.centers) {
+    const old = ctr.name;
+    const u = unitAt(ctr.at), raw = u ? String(ctr.name ?? '').replace(/ \d+$/, '') : '시 경계 인근';
+    const off = nearOffice(ctr.at);
+    let nm = C.unitLabel !== '읍면동' ? (u ? u.name + (off ? ' ' + off : '') : off ?? raw) : (u ? u.name : raw);
+    seen[nm] = (seen[nm] ?? 0) + 1; if (seen[nm] > 1) nm += ' ' + seen[nm];
+    ctr.name = nm; ren[old] = nm;
+  }
+  for (const a of sc.arrows) a.center = ren[a.center] ?? a.center;
+}
+result.structure = sres.structure;
+result.planClasses = sres.classes;
 const sw = SWITCH.map(([n, f]) => '<a href="' + f + '"' + (n === C.short ? ' aria-current="page"' : '') + '>' + n + '</a>').join('');
 result.classes = PLAN_CLASSES.map(({ key, label, color }) => ({ key, label, color }));
 const env = await fs.readFile(path.resolve(projectDir, '..', '.env'), 'utf8').catch(() => '');
@@ -28,6 +55,15 @@ const q = (arr, p) => { const w = arr.reduce((s, a) => s + a[1], 0); let acc = 0
 const wts = result.grid.map((c) => [c, c[2] + c[3] + c[4] + c[5] + c[6]]);
 const xs = wts.map(([c, n]) => [c[0], n]).sort((a, b) => a[0] - b[0]), ys = wts.map(([c, n]) => [c[1], n]).sort((a, b) => a[0] - b[0]);
 const bounds = C.fitBox ?? [q(xs, 0.01), q(ys, 0.01), q(xs, 0.99), q(ys, 0.99)];
+const structPayload = { structure: result.structure, planClasses: result.planClasses, rail: [] };
+const railFile = path.join(rawDir, C.slug + '_rail_osm.json');
+try { // OpenStreetMap 철도 본선 (© OpenStreetMap contributors, ODbL)
+  const rj = JSON.parse(await fs.readFile(railFile, 'utf8'));
+  structPayload.rail = rj.elements.filter((e) => e.type === 'way' && e.tags?.railway === 'rail' && !e.tags.service && Array.isArray(e.geometry)).map((e) => ({ name: String(e.tags.name ?? ''), c: e.geometry.map((g) => [Number(g.lon.toFixed(5)), Number(g.lat.toFixed(5))]) }));
+} catch {}
+delete result.structure; delete result.planClasses;
+const structJson = JSON.stringify(structPayload);
+const sver = crypto.createHash('sha1').update(structJson).digest('hex').slice(0, 10);
 const payload = JSON.stringify(result);
 const ver = crypto.createHash('sha1').update(payload).digest('hex').slice(0, 10);
 
@@ -49,6 +85,8 @@ const html = String.raw`<!doctype html>
   <nav class="citysw" aria-label="도시 선택">${sw}</nav>
   <div class="eyebrow">${C.eyebrow}</div><h1>${C.name} 공간구조 변화 분석</h1><p class="sub">주민등록인구의 전환점으로 나눈 세 시기에 따라, 건축물 사용승인연도와 ${C.unitLabel} 인구 변화로 ${C.short} 시가지의 성장과 축소를 살펴봅니다. 삼척 '도시형태3' 탭과 같은 기준입니다.</p><span class="badge">분석 기준일 · 2026.11.04</span>
   <div class="controls" style="grid-template-columns:auto 1fr"><label for="basemap">배경</label><select id="basemap"><option value="light">밝은 지도</option><option value="voyager">기본 지도</option><option value="dark">어두운 지도</option><option value="none">없음</option></select><button id="resetView">전체 보기</button></div>
+  <div class="tabs" role="tablist" style="grid-template-columns:1fr 1fr;margin:0 0 12px"><button role="tab" id="tabShr" aria-selected="true">도시축소 3단계</button><button role="tab" id="tabStr" aria-selected="false">공간구조도</button></div>
+  <div id="paneShr">
   <h2>${C.short} 도시축소 3단계 (${C.split} 기점)</h2>
   <div class="eras" id="pBtns" role="group" aria-label="시기" style="grid-template-columns:repeat(3,1fr)"></div>
   <div class="chips" id="chips" role="group" aria-label="표시 요소"></div>
@@ -60,6 +98,19 @@ const html = String.raw`<!doctype html>
   <h2>시기별 신축 건물 — 지역 분포</h2><div class="chart" id="reg"></div><div class="keys" id="regKeys" style="margin-left:0"></div>
   <h2>시기별 신축 건물 — 용도</h2><div class="chart" id="mix"></div>
   <div class="disclaimer" id="disc"></div>
+  </div>
+  <div id="paneStr" hidden>
+    <h2>시기 선택 (누적, 도시축소 3단계 말 기준)</h2>
+    <div class="eras" id="sEras" role="group" aria-label="공간구조도 시기" style="grid-template-columns:repeat(2,1fr)"></div>
+    <div class="chips" id="sChips" role="group" aria-label="공간구조도 표시 요소"></div>
+    <section class="metrics" id="sMetrics"></section>
+    <h2>공간구조 해설</h2><ul class="insights" id="sIns"></ul>
+    <h2>중심지 위계</h2><table class="mini" id="sCenters"></table>
+    <p class="chartnote">세력권은 중심지 반경 2.5km 안의 용도군 건물입니다. 행을 누르면 지도가 그 중심지로 이동합니다.</p>
+    <h2>개발축</h2><table class="mini" id="sAxes"></table>
+    <h2>용도 권역 면적</h2><div class="chart" id="sZones"></div>
+    <div class="disclaimer" id="sNote"></div>
+  </div>
 </aside>
 <button class="toggle" id="togglePanel" aria-expanded="true">◀ 패널 접기</button>
 <div class="zoom"><button id="zoomIn" aria-label="확대">+</button><button id="zoomOut" aria-label="축소">−</button></div>
@@ -104,6 +155,7 @@ function label(t,x,y,bold,col){ctx.font=(bold?'800 12px':'600 11px')+' Inter,"Ma
 // 인구 증감 발산 색: 감소(적갈) — 0(회색) — 증가(녹색)
 const DIV=v=>{const a=Math.min(1,Math.abs(v)/40);return v<0?'rgba(180,83,9,'+(.08+a*.5)+')':'rgba(21,128,61,'+(.08+a*.5)+')';};
 function draw(){const r=canvas.getBoundingClientRect(),w=r.width,h=r.height,S=baseScale*zoom,ox=w/2-cx*S+panX,oy=h/2-cy*S+panY;ctx.clearRect(0,0,w,h);BASE.setView({cx,cy,S,panX,panY});
+  if(tab==='str'&&ST){drawStr(w,h,S,ox,oy);return;}
   const M=D.meta[pi],P=D.periods[M.key],pc=M.color;
   if(document.getElementById('basemap').value!=='none'){ctx.fillStyle='rgba(247,242,235,.45)';ctx.fillRect(0,0,w,h);}
   if(L.dpop&&P.dpop)for(const d of D.districts){const v=P.dpop[d.cd];if(!v)continue;rings(d.mr,S,ox,oy);ctx.fillStyle=DIV(v.chg);ctx.fill('evenodd');}
@@ -123,7 +175,50 @@ function draw(){const r=canvas.getBoundingClientRect(),w=r.width,h=r.height,S=ba
       ctx.beginPath();ctx.arc(p[0],p[1],10,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#fff';ctx.stroke();ctx.fillStyle='#fff';ctx.font='800 11px Inter,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(String(x.no),p[0],p[1]+.5);ctx.textAlign='left';label(x.title,p[0]+14,p[1],true);}}
   document.getElementById('mapnote').textContent=D.cfg.name+' · '+M.label+' '+M.range+' '+M.title+' · 건물 '+fmt(D.n)+'동(100m 격자) · 배경 © OpenStreetMap contributors © CARTO';}
 window.__redraw=draw;
+// ---------- 공간구조도 탭 (삼척 '공간구조도'와 같은 방법) ----------
+let tab='shr',ST=null,sEra='all';const SL={zones:true,rail:true,axes:true,arrows:true,centers:true,bld:true},LEV=['도심','지역중심','부도심','생활권중심'],LR=[17,12,11,7];
+function loadStruct(cb){if(ST)return cb();document.getElementById('mapnote').textContent='공간구조도 데이터 불러오는 중…';const sc=document.createElement('script');sc.src='${C.slug}_struct.js?v=${sver}';sc.onload=()=>{ST=window.__STRUCT;
+  for(const k in ST.structure.scenes){const z=ST.structure.scenes[k];for(const q of z.zones){q.m=q.rings.map(r=>r.map(LL));for(const l of q.labels)l.m=LL(l.at);}z.centers.forEach(c=>{c.m=LL(c.at);});z.arrows.forEach(a=>{a.fm=LL(a.from);a.tm=LL(a.to);});}
+  ST.railM=ST.rail.map(r=>r.c.map(LL));cb();};sc.onerror=()=>{document.getElementById('mapnote').textContent='공간구조도 데이터를 불러오지 못했습니다.';};document.body.append(sc);}
+const SS=()=>ST.structure.scenes[sEra==='all'?'all':'cum:'+sEra];
+function eraName(){if(sEra==='all')return '현재 전체(승인일 미상 포함)';const e=ST.structure.eras.find(x=>x.key===sEra);return e.label;}
+function setTab(t){tab=t;document.getElementById('tabShr').setAttribute('aria-selected',String(t==='shr'));document.getElementById('tabStr').setAttribute('aria-selected',String(t==='str'));document.getElementById('paneShr').hidden=t!=='shr';document.getElementById('paneStr').hidden=t!=='str';
+  if(t==='str')loadStruct(()=>{renderStr();legend();draw();});else{legend();draw();}}
+document.getElementById('tabShr').addEventListener('click',()=>setTab('shr'));document.getElementById('tabStr').addEventListener('click',()=>setTab('str'));
+function drawStr(w,h,S,ox,oy){const P2=m=>[ox+m[0]*S,oy+m[1]*S],Z=SS(),PC=ST.planClasses;
+  if(document.getElementById('basemap').value!=='none'){ctx.fillStyle='rgba(247,242,235,.5)';ctx.fillRect(0,0,w,h);}
+  if(SL.bld){const cell=Math.max(1.2,D.gridM*S/(40075016.7*Math.cos(D.lat*Math.PI/180))),ix=sEra==='all'?6:2+1+D.meta.findIndex(m=>m.key===sEra);ctx.fillStyle='#5b5870';ctx.globalAlpha=.45;for(const c of D.grid){let n=0;for(let k=2;k<=ix;k++)n+=c[k];if(!n)continue;const x=ox+c.m[0]*S,y=oy+c.m[1]*S;if(x<-5||y<-5||x>w+5||y>h+5)continue;ctx.fillRect(x-cell/2,y-cell/2,cell,cell);}ctx.globalAlpha=1;}
+  if(SL.zones){const order=Z.zones.map((z,i)=>i).sort((a,b)=>Z.zones[b].areaHa-Z.zones[a].areaHa);for(const ci of order){const z=Z.zones[ci];if(!z.m.length)continue;rings(z.m,S,ox,oy);ctx.globalAlpha=.5;ctx.fillStyle=PC[ci].color;ctx.fill('evenodd');}ctx.globalAlpha=1;
+    ctx.textAlign='center';ctx.textBaseline='middle';const minHa=Math.max(15,600/zoom);for(const ci of order)for(const l of Z.zones[ci].labels){if(l.ha<minHa)continue;const p=P2(l.m);ctx.font='600 11px Inter,"Malgun Gothic",sans-serif';ctx.lineWidth=3;ctx.strokeStyle='rgba(255,255,255,.7)';ctx.strokeText(PC[ci].label,p[0],p[1]);ctx.fillStyle='#4a4560';ctx.fillText(PC[ci].label,p[0],p[1]);}}
+  if(SL.rail&&ST.railM.length){ctx.lineJoin='round';for(const [wd,col,dash] of [[2.2,'#3d3a5c',[]],[1,'#ffffff',[4,4]]]){ctx.setLineDash(dash);ctx.lineWidth=wd;ctx.strokeStyle=col;for(const r of ST.railM){ctx.beginPath();let p=P2(r[0]);ctx.moveTo(p[0],p[1]);for(let j=1;j<r.length;j++){p=P2(r[j]);ctx.lineTo(p[0],p[1]);}ctx.stroke();}}ctx.setLineDash([]);}
+  ctx.lineCap='round';
+  if(SL.axes)for(const a of Z.axes){const A=P2(Z.centers[a.a].m),B2=P2(Z.centers[a.b].m);ctx.beginPath();ctx.moveTo(A[0],A[1]);ctx.lineTo(B2[0],B2[1]);ctx.setLineDash(a.level?[10,8]:[]);ctx.lineWidth=a.level?3.5:7;ctx.strokeStyle='#2e2b4f';ctx.globalAlpha=a.level?.7:.78;ctx.stroke();}
+  ctx.setLineDash([]);ctx.globalAlpha=1;
+  if(SL.arrows)for(const a of Z.arrows){const A=P2(a.fm),B2=P2(a.tm),ang=Math.atan2(B2[1]-A[1],B2[0]-A[0]),Ln=Math.hypot(B2[0]-A[0],B2[1]-A[1]);if(Ln<14)continue;const hl=Math.min(16,Ln*.45),E=[B2[0]-Math.cos(ang)*hl*.8,B2[1]-Math.sin(ang)*hl*.8];ctx.beginPath();ctx.moveTo(A[0],A[1]);ctx.lineTo(E[0],E[1]);ctx.lineWidth=5;ctx.strokeStyle='#b45309';ctx.stroke();ctx.beginPath();ctx.moveTo(B2[0],B2[1]);ctx.lineTo(B2[0]-Math.cos(ang-.45)*hl,B2[1]-Math.sin(ang-.45)*hl);ctx.lineTo(B2[0]-Math.cos(ang+.45)*hl,B2[1]-Math.sin(ang+.45)*hl);ctx.closePath();ctx.fillStyle='#b45309';ctx.fill();}
+  if(SL.centers){ctx.textAlign='center';ctx.textBaseline='top';for(const c of [...Z.centers].sort((a,b)=>b.level-a.level)){const p=P2(c.m),rr=LR[c.level];if(c.level===0){ctx.beginPath();ctx.arc(p[0],p[1],rr+6,0,Math.PI*2);ctx.lineWidth=2;ctx.strokeStyle='#2e2b4f';ctx.globalAlpha=.6;ctx.stroke();ctx.globalAlpha=1;}
+    ctx.beginPath();ctx.arc(p[0],p[1],rr,0,Math.PI*2);ctx.fillStyle='#f5d33f';ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle='#2e2b4f';ctx.stroke();const big=c.level<=1,ty=p[1]+rr+(c.level===0?9:4);ctx.font=(big?'800 13px':'700 11px')+' Inter,"Malgun Gothic",sans-serif';ctx.lineWidth=3.5;ctx.strokeStyle='rgba(255,255,255,.9)';ctx.strokeText(c.name,p[0],ty);ctx.fillStyle='#2e2b4f';ctx.fillText(c.name,p[0],ty);ctx.font='600 10px Inter,"Malgun Gothic",sans-serif';ctx.strokeText(LEV[c.level],p[0],ty+(big?16:14));ctx.fillStyle='#607089';ctx.fillText(LEV[c.level],p[0],ty+(big?16:14));}}
+  document.getElementById('mapnote').textContent=D.cfg.name+' 공간구조도 · '+eraName()+' · 배경 © OpenStreetMap contributors © CARTO'+(ST.railM.length?' · 철도 © OpenStreetMap':'');}
+function renderStr(){
+  const eb=document.getElementById('sEras');if(!eb.children.length){[...ST.structure.eras.map(e=>[e.key,e.label]),['all','현재 전체']].forEach(([k,l])=>{const b=document.createElement('button');b.textContent=l;b.dataset.k=k;b.style.fontSize='11.5px';b.addEventListener('click',()=>{sEra=k;renderStr();draw();});eb.append(b);});
+    const sc=document.getElementById('sChips');for(const [k,l] of [['zones','용도 권역'],['rail','철도'],['axes','개발축'],['arrows','확산 방향'],['centers','중심지'],['bld','건물']]){const b=document.createElement('button');b.textContent=l;b.setAttribute('aria-pressed','true');b.addEventListener('click',()=>{SL[k]=!SL[k];b.setAttribute('aria-pressed',String(SL[k]));draw();});sc.append(b);}}
+  for(const b of eb.children)b.setAttribute('aria-pressed',String(b.dataset.k===sEra));
+  const Z=SS(),C=Z.centers,PC=ST.planClasses,pct=(a,b)=>b?(a/b*100).toFixed(1)+'%':'–';
+  if(C.length<2){document.getElementById('sMetrics').innerHTML='<article class="metric" style="grid-column:1/-1"><div class="k">'+esc(eraName())+'</div><strong class="txt">'+(C[0]?esc(C[0].name)+' 단일 중심':'중심지 없음')+'</strong></article>';document.getElementById('sIns').innerHTML='';document.getElementById('sCenters').innerHTML='';document.getElementById('sAxes').innerHTML='';}
+  else{const top=C[0],second=C[1],byLv=l=>C.filter(c=>c.level===l),main=Z.axes.filter(a=>a.level===0),axName=a=>esc(C[a.a].name)+'–'+esc(C[a.b].name);
+    document.getElementById('sMetrics').innerHTML='<article class="metric"><div class="k">도심</div><strong class="txt">'+esc(top.name)+'</strong><small>세력권 건물 '+fmt(top.n)+'동</small></article><article class="metric"><div class="k">중심지 위계</div><strong>'+C.length+'곳</strong><small>지역중심 '+byLv(1).length+' · 부도심 '+byLv(2).length+' · 생활권 '+byLv(3).length+'</small></article><article class="metric"><div class="k">개발축</div><strong>'+Z.axes.length+'개</strong><small>주축 '+main.length+' · 부축 '+(Z.axes.length-main.length)+'</small></article><article class="metric"><div class="k">도심 집중도</div><strong>'+(top.n/second.n).toFixed(1)+'배</strong><small>2위 '+esc(second.name)+' 대비</small></article>';
+    const ins=['<b>'+esc(eraName())+'</b> 기준, 세력권(2.5km) 건물이 가장 많은 <b>'+esc(top.name)+'</b>('+fmt(top.n)+'동)이 도심이고, 2위 '+esc(second.name)+'의 '+(top.n/second.n).toFixed(1)+'배입니다. '+((top.n/second.n)<1.3?'여러 중심이 비슷한 규모로 나뉜 <b>다핵 구조</b>입니다.':'<b>단핵 구조</b>에 가깝습니다.')];
+    if(byLv(1).length+byLv(2).length)ins.push('지역중심·부도심: '+[...byLv(2),...byLv(1)].map(c=>esc(c.name)+'('+LEV[c.level]+', '+fmt(c.n)+'동)').join(', ')+'.');
+    if(main.length){const dens=[...main].sort((a,b)=>b.density-a.density)[0];ins.push('주 개발축은 '+main.map(a=>'<b>'+axName(a)+'</b>').join(', ')+'이며, 가장 조밀한 축은 '+axName(dens)+'(회랑 '+fmt(dens.density)+'동/km)입니다.');}
+    for(const a of Z.arrows)ins.push(esc(a.center)+': 이전 시기 대비 새 건물의 무게중심이 <b>'+a.dir+'쪽으로 '+fmt(a.shiftM)+'m</b> 이동.');
+    document.getElementById('sIns').innerHTML=ins.map(t=>'<li>'+t+'</li>').join('');
+    const ct=document.getElementById('sCenters');ct.innerHTML='<thead><tr><th>위계</th><th>중심지</th><th>세력권 건물</th><th>저밀주거 외 주기능</th></tr></thead><tbody>'+C.map((c,i)=>'<tr class="click" data-i="'+i+'"><td>'+LEV[c.level]+'</td><td>'+esc(c.name)+'</td><td>'+fmt(c.n)+'</td><td><i class="swatch" style="background:'+PC[c.feature].color+';margin-right:4px"></i>'+PC[c.feature].label+' '+pct(c.mix[c.feature],c.n)+'</td></tr>').join('')+'</tbody>';
+    for(const tr of ct.querySelectorAll('tr.click'))tr.addEventListener('click',()=>goTo(C[+tr.dataset.i].m,Math.max(zoom,6)));
+    document.getElementById('sAxes').innerHTML='<thead><tr><th>축</th><th>구분</th><th>길이</th><th>회랑 밀도</th></tr></thead><tbody>'+[...Z.axes].sort((a,b)=>a.level-b.level||b.density-a.density).map(a=>'<tr><td>'+axName(a)+'</td><td>'+(a.level?'부축':'주축')+'</td><td>'+a.km+'km</td><td>'+fmt(a.density)+'동/km</td></tr>').join('')+'</tbody>';}
+  const zc=document.getElementById('sZones'),zmax=Math.max(1,...Z.zones.map(z=>z.areaHa));zc.innerHTML='';Z.zones.map((z,ci)=>({ci,ha:z.areaHa})).sort((a,b)=>b.ha-a.ha).forEach(z=>{const row=document.createElement('div');row.className='barrow wide';row.innerHTML='<span>'+PC[z.ci].label+'</span><div class="track"><div class="fill" style="width:'+Math.max(.8,z.ha/zmax*100)+'%;background:'+PC[z.ci].color+'"></div></div><span class="barval">'+fmt(z.ha)+'</span>';zc.append(row);});
+  document.getElementById('sNote').innerHTML='<b>방법</b><br>삼척 \'공간구조도\' 탭과 같은 방법입니다. 용도군별 권역은 좁은 커널(σ=150m)로 그려 서로 겹칠 수 있습니다(반투명). 중심지는 상업·공공기관 밀도(σ=450m)의 국지 정점이며, 위계는 반경 2.5km 세력권의 건물 수로 정했습니다(1위 도심, 도심의 20% 이상이면 5km 밖은 지역중심·안은 부도심, 나머지 생활권중심). 중심지 이름은 위치한 '+esc(D.cfg.unitLabel)+'(과 가까운 동 사무소)로 붙였습니다. 개발축은 중심지 최소신장트리이고 회랑 밀도 상위 40%를 주축으로 보았습니다. 시기는 도시축소 3단계 각 시기 말까지 사용승인된 현존 건물 누적입니다.<br><br><b>자료 한계</b><br>현존 건물·승인일 유효 건물 기준이며, 개발축은 도로망이 아닌 직선 연결입니다. 삼척 기준(세력권 반경·위계 비율)을 대도시에 그대로 적용해 중심지가 많이 잡힐 수 있습니다(최대 12곳).'+(ST.railM.length?' 철도는 OpenStreetMap 운행 본선입니다(© OpenStreetMap contributors, ODbL).':'');
+}
 function legend(){const el=document.getElementById('legend'),M=D.meta[pi],add=h=>{const e=document.createElement('span');e.innerHTML=h;el.append(e);};el.innerHTML='';
+  if(tab==='str'&&ST){for(const c of ST.planClasses)add('<i class="swatch" style="background:'+c.color+'"></i>'+c.label);add('<i class="center-key"></i>중심지(원 크기 = 위계)');if(ST.railM.length)add('<i class="rail-key"></i>철도');add('<i class="axis-key"></i>주 개발축');add('<i class="axis-key sub"></i>부 개발축');add('<i class="arrow-key"></i>시가지 확산 방향');return;}
   add('<i class="swatch" style="background:#cfaea6"></i>주거지역(누적)');add('<i class="swatch" style="background:#7d82a6"></i>산업지역(누적)');add('<i class="swatch" style="background:transparent;border:2px solid '+M.color+'"></i>해당 시기 신규 시가지');add('<i class="swatch" style="background:'+M.color+'"></i>해당 시기 신축');add('<i class="swatch" style="background:#5b5870"></i>이전 건물');
   if(L.notes&&D.notes){add('<i class="ell-key" style="border-color:#1f5f86;border-style:solid"></i>중심(핵)');add('<i class="ell-key" style="border-color:#c2410c"></i>축소');add('<i class="ell-key" style="border-color:#15803d;border-style:solid"></i>성장·집중');add('<i class="axis-key" style="border-top-color:'+M.color+'"></i>확산·이동');add('<i class="ell-key" style="border-color:#7c3aed"></i>행정 변화');}
   if(D.periods[M.key].dpop){add('<i class="swatch" style="background:rgba(180,83,9,.5)"></i>'+U+' 인구 감소');add('<i class="swatch" style="background:rgba(21,128,61,.5)"></i>'+U+' 인구 증가');}}
@@ -164,6 +259,7 @@ render();fit();
 </script>
 </body></html>`;
 await fs.writeFile(path.join(reportDir, C.slug + '.html'), html, 'utf8');
+await fs.writeFile(path.join(reportDir, C.slug + '_struct.js'), '// create_city.mjs 가 생성한 ' + C.name + ' 공간구조도 데이터\nwindow.__STRUCT=' + structJson + ';\n', 'utf8');
 await fs.writeFile(path.join(reportDir, C.slug + '_data.js'), '// create_city.mjs 가 생성한 ' + C.name + ' 지도 데이터\nwindow.__CITY=' + payload + ';\n', 'utf8');
-console.log(`${C.name} 페이지 작성: ${C.slug}.html (${(Buffer.byteLength(html) / 1024).toFixed(0)} KB) + 데이터 ${(Buffer.byteLength(payload) / 1048576).toFixed(1)} MB · 건물 ${result.n.toLocaleString()}동, 격자 ${result.grid.length.toLocaleString()}칸`);
+console.log(`${C.name} 페이지 작성: ${C.slug}.html (${(Buffer.byteLength(html) / 1024).toFixed(0)} KB) + 데이터 ${(Buffer.byteLength(payload) / 1048576).toFixed(1)} MB + 공간구조도 ${(Buffer.byteLength(structJson) / 1048576).toFixed(1)} MB(철도 ${structPayload.rail.length}) · 건물 ${result.n.toLocaleString()}동, 격자 ${result.grid.length.toLocaleString()}칸`);
 for (const P of result.meta) { const p = result.periods[P.key]; console.log(P.label, P.range, '신축', p.n, '지역', p.reg.join('/'), '윤곽', p.housing.length, p.industry.length, p.newArea.length); }
