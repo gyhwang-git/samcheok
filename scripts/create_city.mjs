@@ -1,25 +1,32 @@
-// 부산광역시 도시축소 3단계 페이지 생성 (reports/busan.html + reports/busan_data.js)
+// 도시축소 3단계 페이지 생성 (reports/<slug>.html + reports/<slug>_data.js)
+// 사용: node scripts/create_city.mjs busan | yeosu
 // 삼척 페이지(reports/building_age_preview.html)의 스타일을 그대로 가져와 같은 모양으로 만든다.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { computeBusan } from './busan_form.mjs';
+import { computeCity } from './city_form.mjs';
+import { CITIES, SWITCH } from './city_configs.mjs';
 import { PLAN_CLASSES } from './potato_plan.mjs';
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const rawDir = path.join(projectDir, 'data', 'raw', 'busan'), reportDir = path.join(projectDir, 'reports');
-const rows = JSON.parse(await fs.readFile(path.join(rawDir, 'busan_buildings_points.json'), 'utf8')).rows;
-const sigg = JSON.parse(await fs.readFile(path.join(rawDir, 'busan_sigg.geojson'), 'utf8'));
-const pop = JSON.parse(await fs.readFile(path.join(rawDir, 'busan_population_kosis.json'), 'utf8'));
-const result = computeBusan(rows, sigg, pop);
+const C = CITIES[process.argv[2] ?? 'busan'];
+if (!C) throw new Error('도시 설정 없음: ' + process.argv[2]);
+const rawDir = path.join(projectDir, 'data', 'raw', C.slug), reportDir = path.join(projectDir, 'reports');
+const rows = JSON.parse(await fs.readFile(path.join(rawDir, C.slug + '_buildings_points.json'), 'utf8')).rows;
+const { units, pop } = await C.load(rawDir);
+const result = computeCity(rows, units, pop, C);
+const sw = SWITCH.map(([n, f]) => '<a href="' + f + '"' + (n === C.short ? ' aria-current="page"' : '') + '>' + n + '</a>').join('');
 result.classes = PLAN_CLASSES.map(({ key, label, color }) => ({ key, label, color }));
 const env = await fs.readFile(path.resolve(projectDir, '..', '.env'), 'utf8').catch(() => '');
 const cartoKey = env.match(/^\s*CARTO_API_KEY\s*=\s*["']?([^"'\r\n]+)/m)?.[1]?.trim() ?? '';
 const samcheokHtml = await fs.readFile(path.join(reportDir, 'building_age_preview.html'), 'utf8');
 const style = samcheokHtml.match(/<style>([\s\S]*?)<\/style>/)[1];
-const all = result.districts.flatMap((d) => d.rings.flat());
-const bounds = [Math.min(...all.map((p) => p[0])), Math.min(...all.map((p) => p[1])), Math.max(...all.map((p) => p[0])), Math.max(...all.map((p) => p[1]))];
+// 첫 화면: 건물 격자(건물 수 가중)의 1~99% 범위 — 먼 섬 때문에 시가지가 작게 보이지 않도록
+const q = (arr, p) => { const w = arr.reduce((s, a) => s + a[1], 0); let acc = 0; for (const [v, c] of arr) { acc += c; if (acc >= w * p) return v; } return arr[arr.length - 1][0]; };
+const wts = result.grid.map((c) => [c, c[2] + c[3] + c[4] + c[5] + c[6]]);
+const xs = wts.map(([c, n]) => [c[0], n]).sort((a, b) => a[0] - b[0]), ys = wts.map(([c, n]) => [c[1], n]).sort((a, b) => a[0] - b[0]);
+const bounds = C.fitBox ?? [q(xs, 0.01), q(ys, 0.01), q(xs, 0.99), q(ys, 0.99)];
 const payload = JSON.stringify(result);
 const ver = crypto.createHash('sha1').update(payload).digest('hex').slice(0, 10);
 
@@ -27,7 +34,7 @@ const html = String.raw`<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>부산광역시 공간구조 변화 분석</title>
+<title>${C.name} 공간구조 변화 분석</title>
 <style>${style}
 .dl{list-style:none;margin:0;padding:0;display:grid;gap:3px}.dl li{display:grid;grid-template-columns:70px 1fr 64px;gap:8px;align-items:center;font-size:11.5px;color:#334155;padding:3px 4px;border-radius:6px;cursor:pointer}.dl li:hover{background:#f1f5f9}.dl .bar{height:9px;border-radius:3px}.dl .v{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
 </style>
@@ -36,18 +43,18 @@ const html = String.raw`<!doctype html>
 <body>
 <script>window.__BOUNDS=${JSON.stringify(bounds)};</script>
 <canvas id="basemapCanvas" aria-hidden="true"></canvas>
-<canvas id="map" aria-label="부산광역시 도시축소 3단계 지도"></canvas>
+<canvas id="map" aria-label="${C.name} 도시축소 3단계 지도"></canvas>
 <aside class="panel glass" id="panel">
-  <nav class="citysw" aria-label="도시 선택"><a href="building_age_preview.html">삼척</a><a href="busan.html" aria-current="page">부산</a></nav>
-  <div class="eyebrow">Busan · Urban spatial change</div><h1>부산광역시 공간구조 변화 분석</h1><p class="sub">주민등록인구의 전환점으로 나눈 세 시기에 따라, 건축물 사용승인연도와 구·군 인구 변화로 부산 시가지의 성장과 축소를 살펴봅니다. 삼척 '도시형태3' 탭과 같은 기준입니다.</p><span class="badge">분석 기준일 · 2026.11.04</span>
+  <nav class="citysw" aria-label="도시 선택">${sw}</nav>
+  <div class="eyebrow">${C.eyebrow}</div><h1>${C.name} 공간구조 변화 분석</h1><p class="sub">주민등록인구의 전환점으로 나눈 세 시기에 따라, 건축물 사용승인연도와 ${C.unitLabel} 인구 변화로 ${C.short} 시가지의 성장과 축소를 살펴봅니다. 삼척 '도시형태3' 탭과 같은 기준입니다.</p><span class="badge">분석 기준일 · 2026.11.04</span>
   <div class="controls" style="grid-template-columns:auto 1fr"><label for="basemap">배경</label><select id="basemap"><option value="light">밝은 지도</option><option value="voyager">기본 지도</option><option value="dark">어두운 지도</option><option value="none">없음</option></select><button id="resetView">전체 보기</button></div>
-  <h2>부산 도시축소 3단계 (1995년·2015년 기점)</h2>
+  <h2>${C.short} 도시축소 3단계 (${C.periods[1].start}년·${C.periods[2].start}년 기점)</h2>
   <div class="eras" id="pBtns" role="group" aria-label="시기" style="grid-template-columns:repeat(3,1fr)"></div>
   <div class="chips" id="chips" role="group" aria-label="표시 요소"></div>
   <section id="head"></section>
   <h2>연표</h2><ul class="tl" id="tl"></ul>
-  <h2 id="dH">구·군 인구 변화</h2><ul class="dl" id="dList"></ul>
-  <p class="chartnote">행을 누르면 지도가 그 구·군으로 이동합니다.</p>
+  <h2 id="dH">${C.unitLabel} 인구 변화</h2><ul class="dl" id="dList"></ul>
+  <p class="chartnote">행을 누르면 지도가 그 ${C.unitLabel}으로 이동합니다.</p>
   <h2>시기별 신축 건물 — 지역 분포</h2><div class="chart" id="reg"></div><div class="keys" id="regKeys" style="margin-left:0"></div>
   <h2>시기별 신축 건물 — 용도</h2><div class="chart" id="mix"></div>
   <div class="disclaimer" id="disc"></div>
@@ -75,11 +82,11 @@ const html = String.raw`<!doctype html>
   window.BASE={mx,my,setView(v){view=v;render();}};sel.addEventListener('change',()=>{render();if(window.__redraw)window.__redraw();});window.addEventListener('resize',render);
 })();
 function __main(D){
-const {mx,my}=BASE,canvas=document.getElementById('map'),ctx=canvas.getContext('2d'),panel=document.getElementById('panel');
+const U=D.cfg.unitLabel,{mx,my}=BASE,canvas=document.getElementById('map'),ctx=canvas.getContext('2d'),panel=document.getElementById('panel');
 const fmt=n=>Math.round(n).toLocaleString('ko-KR'),esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),fp=v=>(v>0?'+':'')+v.toFixed(1)+'%';
 const LL=q=>[mx(q[0]),my(q[1])];
 for(const k in D.periods){const p=D.periods[k];for(const n of ['housing','industry','newArea'])p[n+'M']=p[n].map(r=>r.map(LL));}
-for(const d of D.districts){d.m=LL(d.at);d.mr=d.rings.map(r=>r.map(LL));}
+for(const d of D.districts){d.m=LL(d.at);d.mr=d.rings.map(r=>r.map(LL));let x0=1,x1=0;for(const r of d.mr)for(const q of r){if(q[0]<x0)x0=q[0];if(q[0]>x1)x1=q[0];}d.mw=x1-x0;}
 for(const c of D.grid){c.m=LL(c);}
 const b=window.__BOUNDS,B=[mx(b[0]),my(b[3]),mx(b[2]),my(b[1])],cx=(B[0]+B[2])/2,cy=(B[1]+B[3])/2;let zoom=1,panX=0,panY=0,baseScale=1,drag=null,last=null,pi=2;
 const L={dpop:true,area:true,bld:true,label:true};
@@ -96,19 +103,19 @@ function draw(){const r=canvas.getBoundingClientRect(),w=r.width,h=r.height,S=ba
   if(document.getElementById('basemap').value!=='none'){ctx.fillStyle='rgba(247,242,235,.45)';ctx.fillRect(0,0,w,h);}
   if(L.dpop&&P.dpop)for(const d of D.districts){const v=P.dpop[d.cd];if(!v)continue;rings(d.mr,S,ox,oy);ctx.fillStyle=DIV(v.chg);ctx.fill('evenodd');}
   if(L.area){rings(P.housingM,S,ox,oy);ctx.fillStyle='rgba(207,174,166,.55)';ctx.fill('evenodd');rings(P.industryM,S,ox,oy);ctx.fillStyle='rgba(125,130,166,.5)';ctx.fill('evenodd');}
-  if(L.bld){const cell=Math.max(1.4,D.gridM*S/(40075016.7*Math.cos(35.15*Math.PI/180)));const b1=3+pi;// 인덱스: 2=1963전,3=1기,4=2기,5=3기,6=미상
+  if(L.bld){const cell=Math.max(1.4,D.gridM*S/(40075016.7*Math.cos(D.lat*Math.PI/180)));const b1=3+pi;// 인덱스: 2=1기 이전,3=1기,4=2기,5=3기,6=미상
     for(const c of D.grid){const x=ox+c.m[0]*S,y=oy+c.m[1]*S;if(x<-5||y<-5||x>w+5||y>h+5)continue;let prior=c[2];for(let k=3;k<b1;k++)prior+=c[k];const now=c[b1];
       if(now){ctx.fillStyle=pc;ctx.globalAlpha=Math.min(1,.45+now*.05);}else if(prior){ctx.fillStyle='#5b5870';ctx.globalAlpha=.55;}else continue;ctx.fillRect(x-cell/2,y-cell/2,cell,cell);}ctx.globalAlpha=1;}
   if(L.area){rings(P.newAreaM,S,ox,oy);ctx.lineWidth=4;ctx.strokeStyle='#fff';ctx.stroke();ctx.lineWidth=2;ctx.strokeStyle=pc;ctx.stroke();}
   ctx.lineWidth=1.1;ctx.strokeStyle='rgba(46,43,79,.55)';for(const d of D.districts){rings(d.mr,S,ox,oy);ctx.stroke();}
-  if(L.label){ctx.textAlign='center';ctx.textBaseline='middle';for(const d of D.districts){const x=ox+d.m[0]*S,y=oy+d.m[1]*S;const v=P.dpop&&P.dpop[d.cd];label(d.name,x,y-(v?7:0),true);if(v)label(fp(v.chg),x,y+8,false,v.chg<0?'#9a3412':'#166534');}}
-  document.getElementById('mapnote').textContent='부산 · '+M.label+' '+M.range+' '+M.title+' · 건물 '+fmt(D.n)+'동(100m 격자) · 배경 © OpenStreetMap contributors © CARTO';}
+  if(L.label){ctx.textAlign='center';ctx.textBaseline='middle';for(const d of D.districts){if(d.mw*S<44)continue;const x=ox+d.m[0]*S,y=oy+d.m[1]*S;const v=P.dpop&&P.dpop[d.cd];label(d.name,x,y-(v?7:0),true);if(v)label(fp(v.chg),x,y+8,false,v.chg<0?'#9a3412':'#166534');}}
+  document.getElementById('mapnote').textContent=D.cfg.name+' · '+M.label+' '+M.range+' '+M.title+' · 건물 '+fmt(D.n)+'동(100m 격자) · 배경 © OpenStreetMap contributors © CARTO';}
 window.__redraw=draw;
 function legend(){const el=document.getElementById('legend'),M=D.meta[pi],add=h=>{const e=document.createElement('span');e.innerHTML=h;el.append(e);};el.innerHTML='';
   add('<i class="swatch" style="background:#cfaea6"></i>주거지역(누적)');add('<i class="swatch" style="background:#7d82a6"></i>산업지역(누적)');add('<i class="swatch" style="background:transparent;border:2px solid '+M.color+'"></i>해당 시기 신규 시가지');add('<i class="swatch" style="background:'+M.color+'"></i>해당 시기 신축');add('<i class="swatch" style="background:#5b5870"></i>이전 건물');
-  if(D.periods[M.key].dpop){add('<i class="swatch" style="background:rgba(180,83,9,.5)"></i>구·군 인구 감소');add('<i class="swatch" style="background:rgba(21,128,61,.5)"></i>구·군 인구 증가');}}
+  if(D.periods[M.key].dpop){add('<i class="swatch" style="background:rgba(180,83,9,.5)"></i>'+U+' 인구 감소');add('<i class="swatch" style="background:rgba(21,128,61,.5)"></i>'+U+' 인구 증가');}}
 const pB=document.getElementById('pBtns');D.meta.forEach((m,i)=>{const bt=document.createElement('button');bt.innerHTML=m.label+' · '+m.range+'<br><small style="font-weight:600">'+m.title+'</small>';bt.dataset.i=i;bt.addEventListener('click',()=>{pi=i;render();draw();});pB.append(bt);});
-const ch=document.getElementById('chips');for(const [k,l] of [['dpop','구·군 인구 증감'],['area','시가지 윤곽'],['bld','건물'],['label','구·군 이름']]){const bt=document.createElement('button');bt.textContent=l;bt.setAttribute('aria-pressed','true');bt.addEventListener('click',()=>{L[k]=!L[k];bt.setAttribute('aria-pressed',String(L[k]));draw();});ch.append(bt);}
+const ch=document.getElementById('chips');for(const [k,l] of [['dpop',U+' 인구 증감'],['area','시가지 윤곽'],['bld','건물'],['label',U+' 이름']]){const bt=document.createElement('button');bt.textContent=l;bt.setAttribute('aria-pressed','true');bt.addEventListener('click',()=>{L[k]=!L[k];bt.setAttribute('aria-pressed',String(L[k]));draw();});ch.append(bt);}
 function render(){
   for(const bt of pB.children)bt.setAttribute('aria-pressed',String(+bt.dataset.i===pi));
   const M=D.meta[pi],P=D.periods[M.key],pct=(a,b)=>b?(a/b*100).toFixed(1)+'%':'–',popChg=(P.pop.to-P.pop.from)/P.pop.from*100;
@@ -116,16 +123,16 @@ function render(){
   let space='';
   if(P.dpop){const arr=Object.entries(P.dpop).filter(([,v])=>v).map(([cd,v])=>({cd,name:D.districts.find(d=>d.cd===cd).name,...v}));const up=arr.filter(a=>a.chg>0).sort((a,b)=>b.chg-a.chg),dn=arr.filter(a=>a.chg<0).sort((a,b)=>a.chg-b.chg);
     space='인구 증가 '+up.length+'곳'+(up.length?' ('+up.slice(0,3).map(a=>a.name+' '+fp(a.chg)).join(', ')+')':'')+', 감소 '+dn.length+'곳 (최대 '+dn.slice(0,3).map(a=>a.name+' '+fp(a.chg)).join(', ')+')';}
-  else space='주민등록인구 연간 통계가 1992년부터라 구·군별 변화는 2기부터 표시합니다. 이 시기 신축은 '+D.regions[topReg].label+'에 가장 많습니다.';
+  else space=U+'별 인구 자료가 없는 시기라 건물 자료로만 표시합니다. 이 시기 신축은 '+D.regions[topReg].label+'에 가장 많습니다.';
   document.getElementById('head').innerHTML='<article class="metric" style="border-left:5px solid '+M.color+'"><div class="k">'+M.label+' · '+M.range+'</div><strong class="txt">'+esc(M.title)+'</strong></article><div class="sum3"><b>인구</b> '+(P.pop.from/1e4).toFixed(1)+'만 → '+(P.pop.to/1e4).toFixed(1)+'만 명 ('+P.pop.fromY+'~'+P.pop.toY+', '+fp(popChg)+')<br><b>공간</b> '+esc(space)+'<br><b>신축 건물(현존, 승인 기준)</b> '+fmt(P.n)+'동 · 5층 이상 '+pct(P.five,P.n)+' · 최다 지역 '+esc(D.regions[topReg].label)+' '+pct(P.reg[topReg],regT)+'</div>';
   document.getElementById('tl').innerHTML=D.timeline[M.key].map(([y,t])=>'<li><b style="color:'+M.color+'">'+esc(y)+'</b><span>'+esc(t)+'</span></li>').join('');
-  const dl=document.getElementById('dList');dl.innerHTML='';document.getElementById('dH').textContent=P.dpop?'구·군 인구 변화 ('+P.pop.fromY+'→'+P.pop.toY+')':'구·군별 신축 건물 ('+M.range+')';
+  const dl=document.getElementById('dList');dl.innerHTML='';document.getElementById('dH').textContent=P.dpop?U+' 인구 변화 ('+D.meta[pi].unitFrom+'→'+D.meta[pi].unitTo+')':U+'별 신축 건물 ('+M.range+')';
   const items=D.districts.map(d=>({d,v:P.dpop?P.dpop[d.cd]:null,n:P.dnew[d.cd]})).sort((a,b)=>P.dpop?((b.v?b.v.chg:-1e9)-(a.v?a.v.chg:-1e9)):b.n-a.n);const maxAbs=Math.max(...items.map(it=>P.dpop?Math.abs(it.v?it.v.chg:0):it.n));
   for(const it of items){const li=document.createElement('li');const val=P.dpop?(it.v?it.v.chg:0):it.n;const col=P.dpop?(val<0?'#b45309':'#15803d'):M.color;li.innerHTML='<span>'+esc(it.d.name)+'</span><div class="bar" style="width:'+Math.max(2,Math.abs(val)/maxAbs*100)+'%;background:'+col+'"></div><span class="v">'+(P.dpop?(it.v?fp(it.v.chg):'–'):fmt(it.n)+'동')+'</span>';li.title=P.dpop&&it.v?fmt(it.v.from)+' → '+fmt(it.v.to)+'명':'';li.addEventListener('click',()=>goTo(it.d.m,Math.max(zoom,5)));dl.append(li);}
   const reg=document.getElementById('reg');reg.innerHTML='';D.meta.forEach((m,i)=>{const p=D.periods[m.key],t=p.reg.reduce((a,b)=>a+b,0),row=document.createElement('div');row.className='stackrow';row.style.cursor='pointer';row.innerHTML='<span'+(i===pi?' style="font-weight:800;color:#132238"':'')+'>'+m.label+' '+m.range+'</span><div class="regbar">'+p.reg.map((v,k)=>v?'<i style="width:'+(v/t*100)+'%;background:'+D.regions[k].color+'" title="'+D.regions[k].label+' '+fmt(v)+'동 ('+pct(v,t)+')"></i>':'').join('')+'</div>';row.addEventListener('click',()=>{pi=i;render();draw();});reg.append(row);});
   document.getElementById('regKeys').innerHTML=D.regions.map(r=>'<span><i class="swatch" style="background:'+r.color+'"></i>'+r.label+'</span>').join('');
   const mx2=document.getElementById('mix');mx2.innerHTML='';D.meta.forEach((m,i)=>{const p=D.periods[m.key],t=p.mix.reduce((a,b)=>a+b,0),row=document.createElement('div');row.className='stackrow';row.innerHTML='<span'+(i===pi?' style="font-weight:800;color:#132238"':'')+'>'+m.label+'</span><div class="stack">'+p.mix.map((v,k)=>v?'<i style="width:'+(v/t*100)+'%;background:'+D.classes[k].color+'" title="'+D.classes[k].label+' '+fmt(v)+'동 ('+pct(v,t)+')"></i>':'').join('')+'</div>';mx2.append(row);});
-  document.getElementById('disc').innerHTML='<b>시기 구분 기준</b><br>삼척 도시형태3 탭처럼 인구 전환점으로 세 시기를 나눴습니다. 부산 주민등록인구는 1995년(3,883,880명)이 정점이고, 1995~2015년에는 연평균 약 1.9만 명, 2015~2025년에는 연평균 약 2.7만 명씩 줄어 2015년을 감소 가속의 기점으로 보았습니다. 1기 시작은 직할시 승격(1963)입니다.<br><br><b>방법</b><br>건물은 국토교통부·브이월드 GIS건물통합정보 '+fmt(D.n)+'동(사용승인일 유효 '+fmt(D.dated)+'동)을 썼고, 웹에서 가볍게 보이도록 100m 격자로 묶어 표시했습니다. 주거·산업 윤곽과 신규 시가지는 시기 말까지(또는 시기 중) 사용승인된 현존 건물의 밀도로 그렸습니다. 지역 구분: 원도심=중·서·동·영도, 동부산=해운대·기장, 서부산=강서, 그 밖은 기성 시가지.<br><br><b>자료 한계</b><br>현존 건물만 있어 철거·재건축된 건물은 빠지고, 오래된 시기일수록 실제보다 적게 나타납니다. 주민등록인구는 2010년 10월부터 거주불명자, 2015년 1월부터 재외국민을 포함해 그 전후 비교에 주의가 필요합니다. 구·군 경계는 현재 기준이며, 강서구(1989)·기장군(1995) 편입 전 시기도 같은 경계로 집계했습니다.<br><small>출처: '+esc(D.popSource)+' · 국토교통부·브이월드 GIS건물통합정보</small>';
+  document.getElementById('disc').innerHTML='<b>시기 구분 기준</b><br>삼척 도시형태3 탭처럼 인구 전환점으로 세 시기를 나눴습니다. '+esc(D.cfg.basis)+'<br><br><b>방법</b><br>건물은 국토교통부·브이월드 GIS건물통합정보 '+fmt(D.n)+'동(사용승인일 유효 '+fmt(D.dated)+'동)을 썼고, 웹에서 가볍게 보이도록 '+D.gridM+'m 격자로 묶어 표시했습니다. 주거·산업 윤곽과 신규 시가지는 시기 말까지(또는 시기 중) 사용승인된 현존 건물의 밀도로 그렸습니다. 지역 구분: '+esc(D.cfg.regionText)+'<br><br><b>자료 한계</b><br>현존 건물만 있어 철거·재건축된 건물은 빠지고, 오래된 시기일수록 실제보다 적게 나타납니다. 주민등록인구는 2010년 10월부터 거주불명자, 2015년 1월부터 재외국민을 포함해 그 전후 비교에 주의가 필요합니다. '+esc(D.cfg.limits)+'<br><small>출처: '+esc(D.popSource)+' · 국토교통부·브이월드 GIS건물통합정보</small>';
   legend();}
 canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);drag=true;last={x:e.clientX,y:e.clientY};canvas.classList.add('dragging');});
 canvas.addEventListener('pointermove',e=>{if(!drag)return;panX+=e.clientX-last.x;panY+=e.clientY-last.y;last={x:e.clientX,y:e.clientY};draw();});
@@ -137,10 +144,10 @@ document.getElementById('resetView').addEventListener('click',fit);window.addEve
 const tg=document.getElementById('togglePanel');tg.addEventListener('click',()=>{const c=document.body.classList.toggle('collapsed');tg.textContent=c?'▶ 패널 열기':'◀ 패널 접기';});
 render();fit();
 }
-(function(){const s=document.createElement('script');s.src='busan_data.js?v=${ver}';s.async=true;s.onload=()=>{if(window.__BUSAN)__main(window.__BUSAN);};s.onerror=()=>{document.getElementById('mapnote').textContent='부산 데이터 파일(busan_data.js)을 불러오지 못했습니다.';};document.body.append(s);})();
+(function(){const s=document.createElement('script');s.src='${C.slug}_data.js?v=${ver}';s.async=true;s.onload=()=>{if(window.__CITY)__main(window.__CITY);};s.onerror=()=>{document.getElementById('mapnote').textContent='데이터 파일(${C.slug}_data.js)을 불러오지 못했습니다.';};document.body.append(s);})();
 </script>
 </body></html>`;
-await fs.writeFile(path.join(reportDir, 'busan.html'), html, 'utf8');
-await fs.writeFile(path.join(reportDir, 'busan_data.js'), '// create_busan.mjs 가 생성한 부산 지도 데이터\nwindow.__BUSAN=' + payload + ';\n', 'utf8');
-console.log(`부산 페이지 작성: busan.html (${(Buffer.byteLength(html) / 1024).toFixed(0)} KB) + 데이터 ${(Buffer.byteLength(payload) / 1048576).toFixed(1)} MB · 건물 ${result.n.toLocaleString()}동, 격자 ${result.grid.length.toLocaleString()}칸`);
+await fs.writeFile(path.join(reportDir, C.slug + '.html'), html, 'utf8');
+await fs.writeFile(path.join(reportDir, C.slug + '_data.js'), '// create_city.mjs 가 생성한 ' + C.name + ' 지도 데이터\nwindow.__CITY=' + payload + ';\n', 'utf8');
+console.log(`${C.name} 페이지 작성: ${C.slug}.html (${(Buffer.byteLength(html) / 1024).toFixed(0)} KB) + 데이터 ${(Buffer.byteLength(payload) / 1048576).toFixed(1)} MB · 건물 ${result.n.toLocaleString()}동, 격자 ${result.grid.length.toLocaleString()}칸`);
 for (const P of result.meta) { const p = result.periods[P.key]; console.log(P.label, P.range, '신축', p.n, '지역', p.reg.join('/'), '윤곽', p.housing.length, p.industry.length, p.newArea.length); }

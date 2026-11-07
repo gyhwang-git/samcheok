@@ -1,12 +1,16 @@
-// 부산광역시 GIS건물통합정보(브이월드 LT_C_BLDGINFO)를 내려받아 건물 중심점과 주요 속성만 저장한다.
-// 부산은 건물이 많아 경계상자를 3×3 칸으로 나눠 조회하고, 부산 시도 경계 안의 건물만 남긴다.
-// 출력: data/raw/busan/busan_buildings_points.json  [[lon, lat, useapr_day, usability, grnd_flr, bld_nm], ...]
+// 도시의 GIS건물통합정보(브이월드 LT_C_BLDGINFO)를 내려받아 건물 중심점과 주요 속성만 저장한다.
+// 사용: node scripts/download_city.mjs <slug> <시군구코드 접두> <검색상자 x0,y0,x1,y1> [칸 수]
+//   예) node scripts/download_city.mjs busan 26 128.7,34.8,129.4,35.45 3
+//       node scripts/download_city.mjs yeosu 46130 127.0,33.9,128.0,35.0 3
+// 경계상자를 N×N 칸으로 나눠 조회하고, 해당 시군구 경계 안의 건물만 남긴다. 칸·페이지 단위로 이어받기 가능.
+// 출력: data/raw/<slug>/<slug>_buildings_points.json  [[lon, lat, useapr_day, usability, grnd_flr, bld_nm], ...]
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const outDir = path.join(projectDir, 'data', 'raw', 'busan');
+const [SLUG = 'busan', PREFIX = '26', SEARCH = '128.7,34.8,129.4,35.45', NARG = '3'] = process.argv.slice(2);
+const outDir = path.join(projectDir, 'data', 'raw', SLUG);
 const env = await fs.readFile(path.resolve(projectDir, '..', '.env'), 'utf8');
 const key = env.match(/^\s*V-WORLD_KEY\s*=\s*["']?([^"'\r\n]+)/m)?.[1]?.trim();
 if (!key) throw new Error('.env 에 V-WORLD_KEY 가 없습니다.');
@@ -27,17 +31,17 @@ const inRing = (x, y, r) => { let c = false; for (let i = 0, j = r.length - 1; i
 const inGeom = (x, y, g) => (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).some((p) => inRing(x, y, p[0]) && !p.slice(1).some((h) => inRing(x, y, h)));
 
 // 부산 시군구 경계(26xxx)
-const sigg = (await req({ data: 'LT_C_ADSIGG_INFO', geomFilter: 'BOX(128.7,34.8,129.4,35.45)', size: '100', page: '1' })).filter((f) => String(f.properties?.sig_cd).startsWith('26'));
-if (!sigg.length) throw new Error('부산 시군구 경계를 찾지 못했습니다.');
+const sigg = (await req({ data: 'LT_C_ADSIGG_INFO', geomFilter: `BOX(${SEARCH})`, size: '100', page: '1' })).filter((f) => String(f.properties?.sig_cd).startsWith(PREFIX));
+if (!sigg.length) throw new Error(SLUG + ' 시군구 경계를 찾지 못했습니다.');
 const all = sigg.flatMap((f) => (f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates).flatMap((p) => p[0]));
 const B = [Math.min(...all.map((p) => p[0])), Math.min(...all.map((p) => p[1])), Math.max(...all.map((p) => p[0])), Math.max(...all.map((p) => p[1]))];
-console.log('부산 시군구', sigg.length, '경계상자', B.map((v) => v.toFixed(3)).join(','));
+console.log(SLUG + ' 시군구', sigg.length, '경계상자', B.map((v) => v.toFixed(3)).join(','));
 await fs.mkdir(outDir, { recursive: true });
-await fs.writeFile(path.join(outDir, 'busan_sigg.geojson'), JSON.stringify({ type: 'FeatureCollection', features: sigg.map((f) => ({ type: 'Feature', properties: { sig_cd: f.properties.sig_cd, sig_kor_nm: f.properties.sig_kor_nm }, geometry: f.geometry })) }), 'utf8');
+await fs.writeFile(path.join(outDir, `${SLUG}_sigg.geojson`), JSON.stringify({ type: 'FeatureCollection', features: sigg.map((f) => ({ type: 'Feature', properties: { sig_cd: f.properties.sig_cd, sig_kor_nm: f.properties.sig_kor_nm }, geometry: f.geometry })) }), 'utf8');
 
 // 칸·페이지 단위로 디스크에 이어 저장 → 중간에 끊겨도 다시 실행하면 이어서 받음
 const tileDir = path.join(outDir, 'tiles'); await fs.mkdir(tileDir, { recursive: true });
-const N = 3, seen = new Set(), out = [];
+const N = Number(NARG), seen = new Set(), out = [];
 for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
   const box = [B[0] + ((B[2] - B[0]) * i) / N, B[1] + ((B[3] - B[1]) * j) / N, B[0] + ((B[2] - B[0]) * (i + 1)) / N, B[1] + ((B[3] - B[1]) * (j + 1)) / N];
   let kept = 0;
@@ -67,5 +71,5 @@ for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
   }
   console.log(`칸 ${i},${j} 완료: ${kept.toLocaleString()}건 (전체 ${out.length.toLocaleString()})`);
 }
-await fs.writeFile(path.join(outDir, 'busan_buildings_points.json'), JSON.stringify({ source: '국토교통부·브이월드 GIS건물통합정보 LT_C_BLDGINFO', fields: ['lon', 'lat', 'useapr_day', 'usability', 'grnd_flr', 'bld_nm', 'sig'], rows: out }), 'utf8');
+await fs.writeFile(path.join(outDir, `${SLUG}_buildings_points.json`), JSON.stringify({ source: '국토교통부·브이월드 GIS건물통합정보 LT_C_BLDGINFO', fields: ['lon', 'lat', 'useapr_day', 'usability', 'grnd_flr', 'bld_nm', 'sig'], rows: out }), 'utf8');
 console.log('완료', out.length);

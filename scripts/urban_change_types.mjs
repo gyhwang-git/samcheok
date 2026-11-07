@@ -26,7 +26,7 @@ export const TYPES = [
 ];
 
 // UTM-K(EPSG:5179, GRS80 횡메르카토르) → 경위도
-function utmkToLonLat(E, N) {
+export function utmkToLonLat(E, N) {
   const a = 6378137, f = 1 / 298.257222101, k0 = 0.9996, lon0 = (127.5 * Math.PI) / 180, lat0 = (38 * Math.PI) / 180, FE = 1000000, FN = 2000000;
   const e2 = f * (2 - f), ep2 = e2 / (1 - e2);
   const M = (phi) => a * ((1 - e2 / 4 - (3 * e2 * e2) / 64 - (5 * e2 ** 3) / 256) * phi - ((3 * e2) / 8 + (3 * e2 * e2) / 32 + (45 * e2 ** 3) / 1024) * Math.sin(2 * phi) + ((15 * e2 * e2) / 256 + (45 * e2 ** 3) / 1024) * Math.sin(4 * phi) - ((35 * e2 ** 3) / 3072) * Math.sin(6 * phi));

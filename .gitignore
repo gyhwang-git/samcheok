@@ -10,3 +10,4 @@ node_modules/
 
 # 부산 다운로드 중간 저장분(최종본은 busan_buildings_points.json)
 data/raw/busan/tiles/
+data/raw/yeosu/tiles/
