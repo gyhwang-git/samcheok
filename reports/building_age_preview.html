@@ -146,23 +146,27 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
   const VKEY=window.VWORLD_KEY||'',bc=document.getElementById('basemapCanvas'),bx=bc.getContext('2d'),sel=document.getElementById('basemap');
   const mx=lon=>(lon+180)/360,my=lat=>{const s=Math.sin(lat*Math.PI/180);return .5-Math.log((1+s)/(1-s))/(4*Math.PI);};
   // 키가 없으면(공개 배포본) Esri 타일 사용. OSM 공식 타일은 github.io 리퍼러에 429를 반환해 쓰지 않음
-  const BASEMAPS={white:{layer:'white',ext:'png',max:18,esri:'Canvas/World_Light_Gray_Base',emax:16},Base:{layer:'Base',ext:'png',max:19,esri:'World_Street_Map',emax:19},Satellite:{layer:'Satellite',ext:'jpeg',max:19,esri:'World_Imagery',emax:19}};
-  if(!VKEY){const g=sel.querySelector('option[value="white"]');if(g)g.textContent='밝은 지도';const b=sel.querySelector('option[value="Base"]');if(b)b.textContent='기본 지도';const o=sel.querySelector('option[value="Satellite"]');if(o)o.textContent='위성 영상';}
-  const cache=new Map();let view=null,pend=false;
+  // Esri 회색·도로 지도는 한국 지역에서 z13까지만 실제 데이터가 있고 z14부터 'Map data not yet available' 타일이 옴 → z13 타일을 확대해 사용. 영상은 z19까지 있음
+  const BASEMAPS={white:{layer:'white',ext:'png',max:18,esri:'Canvas/World_Light_Gray_Base',emax:13},Base:{layer:'Base',ext:'png',max:19,esri:'World_Street_Map',emax:13},Satellite:{layer:'Satellite',ext:'jpeg',max:19,esri:'World_Imagery',emax:19}};
+    const cache=new Map();let view=null,pend=false,useV=!!VKEY,vOk=0,vErr=0;
+  const relabel=()=>{if(useV)return;const g=sel.querySelector('option[value="white"]');if(g)g.textContent='밝은 지도';const b=sel.querySelector('option[value="Base"]');if(b)b.textContent='기본 지도';const o=sel.querySelector('option[value="Satellite"]');if(o)o.textContent='위성 영상';};
   const req=()=>{if(pend)return;pend=true;requestAnimationFrame(()=>{pend=false;render();});};
-  const keyOf=(bm,z,y,x)=>(VKEY?bm.layer:bm.esri)+'/'+z+'/'+y+'/'+x;
-  function getTile(bm,z,x,y){const k=keyOf(bm,z,y,x);let t=cache.get(k);if(!t){t=new Image();t.decoding='async';t.onload=req;t.src=VKEY?'https://api.vworld.kr/req/wmts/1.0.0/'+VKEY+'/'+k+'.'+bm.ext:'https://server.arcgisonline.com/ArcGIS/rest/services/'+bm.esri+'/MapServer/tile/'+z+'/'+y+'/'+x;cache.set(k,t);if(cache.size>600)cache.delete(cache.keys().next().value);}return t;}
+  const keyOf=(bm,z,y,x)=>(useV?bm.layer:bm.esri)+'/'+z+'/'+y+'/'+x;
+  // 브이월드 타일이 연속 실패하면(예: 해외 IP·VPN·Cloudflare WARP 경유 시 차단) Esri로 자동 전환
+  const vFail=()=>{vErr++;if(useV&&vOk===0&&vErr>=4){useV=false;relabel();req();if(window.BASE.onSource)window.BASE.onSource();}};
+  function getTile(bm,z,x,y){const k=keyOf(bm,z,y,x);let t=cache.get(k);if(!t){t=new Image();t.decoding='async';const isV=useV;t.onload=()=>{if(isV)vOk++;req();};t.onerror=()=>{if(isV)vFail();};t.src=isV?'https://api.vworld.kr/req/wmts/1.0.0/'+VKEY+'/'+k+'.'+bm.ext:'https://server.arcgisonline.com/ArcGIS/rest/services/'+bm.esri+'/MapServer/tile/'+z+'/'+y+'/'+x;cache.set(k,t);if(cache.size>600)cache.delete(cache.keys().next().value);}return t;}
   const ready=t=>t&&t.complete&&t.naturalWidth>0;
   function render(){if(!view)return;const r=bc.getBoundingClientRect(),w=r.width,h=r.height,dpr=window.devicePixelRatio||1,W=Math.round(w*dpr),H=Math.round(h*dpr);if(bc.width!==W||bc.height!==H){bc.width=W;bc.height=H;}
     bx.setTransform(dpr,0,0,dpr,0,0);bx.clearRect(0,0,w,h);const bm=BASEMAPS[sel.value];if(!bm)return;const {cx,cy,S,panX,panY}=view;
-    const z=Math.max(6,Math.min(VKEY?bm.max:bm.emax,Math.round(Math.log2(S/256)))),n=2**z,ts=S/n;
+    const z=Math.max(6,Math.min(useV?bm.max:bm.emax,Math.round(Math.log2(S/256)))),n=2**z,ts=S/n;
     const tx0=Math.floor((cx+(-w/2-panX)/S)*n),tx1=Math.floor((cx+(w/2-panX)/S)*n),ty0=Math.max(0,Math.floor((cy+(-h/2-panY)/S)*n)),ty1=Math.min(n-1,Math.floor((cy+(h/2-panY)/S)*n));
     // 화면 중앙에서 가까운 타일부터 요청
     const list=[];for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++)list.push([tx,ty]);const mxT=(tx0+tx1)/2,myT=(ty0+ty1)/2;list.sort((a,b)=>Math.hypot(a[0]-mxT,a[1]-myT)-Math.hypot(b[0]-mxT,b[1]-myT));
     for(const [tx,ty] of list){const xx=((tx%n)+n)%n,sx=w/2+(tx/n-cx)*S+panX,sy=h/2+(ty/n-cy)*S+panY,t=getTile(bm,z,xx,ty);
       if(ready(t)){bx.drawImage(t,sx,sy,ts+.5,ts+.5);continue;}
       for(let d=1;d<=5&&z-d>=6;d++){const p=cache.get(keyOf(bm,z-d,ty>>d,xx>>d));if(ready(p)){const f=1<<d,s2=256/f;bx.drawImage(p,(xx%f)*s2,(ty%f)*s2,s2,s2,sx,sy,ts+.5,ts+.5);break;}}}}
-  window.BASE={VKEY,mx,my,setView(v){view=v;render();},render};
+  relabel();
+  window.BASE={VKEY,mx,my,setView(v){view=v;render();},render,attr:()=>useV?'배경 © VWorld':(VKEY?'브이월드 연결 실패 → ':'')+'배경 © Esri, HERE, Garmin, © OpenStreetMap contributors',onSource:null};
   sel.addEventListener('change',render);window.addEventListener('resize',render);
   // 데이터가 오기 전 초기 화면: 본체의 fitView와 같은 계산
   const b=window.__BOUNDS,B=[mx(b[0]),my(b[3]),mx(b[2]),my(b[1])],panel=document.getElementById('panel'),wd=innerWidth,ht=innerHeight;
@@ -260,7 +264,7 @@ function resize(){const r=canvas.getBoundingClientRect(),dpr=window.devicePixelR
 function fitView(){const o=panelOffset();zoom=1;panX=o.x/2;panY=-o.y/2;resize();}
 toggleBtn.addEventListener('click',()=>{const c=document.body.classList.toggle('collapsed');toggleBtn.textContent=c?'▶ 패널 열기':'◀ 패널 접기';toggleBtn.setAttribute('aria-expanded',String(!c));});
 function project(x,y,w,h){const S=baseScale*zoom;return [w/2+(x-cx)*S+panX,h/2+(y-cy)*S+panY];}
-const BASE_ATTR=VKEY?'배경 © VWorld':'배경 © Esri, HERE, Garmin, © OpenStreetMap contributors';
+BASE.onSource=()=>requestDraw();
 let drawPending=false;
 function requestDraw(){if(drawPending)return;drawPending=true;requestAnimationFrame(()=>{drawPending=false;draw();});}
 function visible(f){if(tab==='form3')return !!(f3L&&f3L.bld);if(tab==='form2')return f2L.bld;if(tab==='form')return fLayers.bld;if(tab==='struct')return sLayers.bld&&f[11]>=0;if(tab==='potato')return inScene(f);const v=filter.value;if(v==='all')return true;if(v==='known')return f[7]!==UNK;return Number(v)===(tab==='age'?f[0]:f[7]);}
@@ -274,7 +278,7 @@ if(tab==='struct'){drawStruct(w,h,S,ox,oy,vx0,vx1,vy0,vy1);return;}
 if(tab==='potato'){drawPotato(w,h,S,ox,oy,vx0,vx1,vy0,vy1);return;}
 let shown=0;if(outline){ctx.strokeStyle='rgba(15,23,42,.45)';ctx.lineWidth=.7;}
 for(const f of features){if(!visible(f))continue;shown++;const e=f[10];if(e[2]<vx0||e[0]>vx1||e[3]<vy0||e[1]>vy1)continue;ctx.beginPath();for(const ring of f[6]){if(!ring.length)continue;ctx.moveTo(ox+ring[0][0]*S,oy+ring[0][1]*S);for(let j=1;j<ring.length;j++)ctx.lineTo(ox+ring[j][0]*S,oy+ring[j][1]*S);ctx.closePath();}const st=styleOf(f);ctx.fillStyle=st[0];ctx.globalAlpha=st[1];ctx.fill('evenodd');if(outline){ctx.globalAlpha=1;ctx.stroke();}}
-ctx.globalAlpha=1;document.getElementById('mapnote').textContent=fmt(shown)+'개 건물 도형 표시 · 휠 확대 / 드래그 이동 · '+BASE_ATTR;}
+ctx.globalAlpha=1;document.getElementById('mapnote').textContent=fmt(shown)+'개 건물 도형 표시 · 휠 확대 / 드래그 이동 · '+BASE.attr();}
 function zoomAt(factor,x,y){const old=zoom;zoom=Math.max(1,Math.min(256,zoom*factor));const ratio=zoom/old,r=canvas.getBoundingClientRect(),w=r.width,h=r.height;panX=x-w/2-(x-w/2-panX)*ratio;panY=y-h/2-(y-h/2-panY)*ratio;draw();}
 function findFeature(x,y){const r=canvas.getBoundingClientRect();let closest=null,dist=13;for(const f of features){if(!visible(f))continue;const p=project(f[4],f[5],r.width,r.height),d=Math.hypot(p[0]-x,p[1]-y);if(d<dist){dist=d;closest=f;}}return closest;}
 function showDetail(f){const age=f[0]===11?'승인일 미상':labels[f[0]],use=f[3]?(useNames[f[3]]||f[3])+' ('+f[3]+')':'용도 미상';
@@ -316,7 +320,7 @@ function drawPotato(w,h,S,ox,oy,vx0,vx1,vy0,vy1){
   ctx.font='700 12px Inter,"Malgun Gothic",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';const minHa=Math.max(8,60/zoom);
   PC.forEach((c,ci)=>{if(!layers[ci])return;for(const l of sc[ci].labels){if(l.ha<minHa)continue;const x=ox+l.m[0]*S,y=oy+l.m[1]*S;ctx.lineWidth=3;ctx.strokeStyle='rgba(255,255,255,.75)';ctx.strokeText(c.label,x,y);ctx.fillStyle='#2e2b4f';ctx.fillText(c.label,x,y);}});
   centersNow().slice(0,5).forEach((c,i)=>{const x=ox+c.m[0]*S,y=oy+c.m[1]*S;ctx.beginPath();ctx.arc(x,y,9,0,Math.PI*2);ctx.fillStyle='#f5d33f';ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#2e2b4f';ctx.stroke();ctx.fillStyle='#132238';ctx.font='800 10px Inter,sans-serif';ctx.fillText(String(i+1),x,y+.5);});
-  ctx.globalAlpha=1;document.getElementById('mapnote').textContent=sceneName()+' · 건물 '+fmt(shown)+'건 · 휠 확대 / 드래그 이동 · '+BASE_ATTR;}
+  ctx.globalAlpha=1;document.getElementById('mapnote').textContent=sceneName()+' · 건물 '+fmt(shown)+'건 · 휠 확대 / 드래그 이동 · '+BASE.attr();}
 const eraBtns=document.getElementById('eraBtns');
 [...ERAS.map((e,i)=>[i,e.label]),['all','현재 전체']].forEach(([v,l])=>{const b=document.createElement('button');b.textContent=l;b.dataset.era=v;b.addEventListener('click',()=>{stopPlay();setEra(v==='all'?'all':Number(v));});eraBtns.append(b);});
 const chips=document.getElementById('layerChips');
@@ -409,7 +413,7 @@ function drawStruct(w,h,S,ox,oy,vx0,vx1,vy0,vy1){
       const big=c.level<=1;ctx.font=(big?'800 13px':'700 11px')+' Inter,"Malgun Gothic",sans-serif';const ty=p[1]+r+(c.level===0?9:4),txt=c.name;
       ctx.lineWidth=3.5;ctx.strokeStyle='rgba(255,255,255,.9)';ctx.strokeText(txt,p[0],ty);ctx.fillStyle='#2e2b4f';ctx.fillText(txt,p[0],ty);
       ctx.font='600 10px Inter,"Malgun Gothic",sans-serif';ctx.strokeText(LEVELS[c.level],p[0],ty+(big?16:14));ctx.fillStyle='#607089';ctx.fillText(LEVELS[c.level],p[0],ty+(big?16:14));}}
-  document.getElementById('mapnote').textContent='공간구조도 · '+sEraName()+(sLayers.bld?' · 건물 '+fmt(shown)+'건':'')+' · 휠 확대 / 드래그 이동 · '+BASE_ATTR+(RAIL.length?' · 철도 © OpenStreetMap':'');}
+  document.getElementById('mapnote').textContent='공간구조도 · '+sEraName()+(sLayers.bld?' · 건물 '+fmt(shown)+'건':'')+' · 휠 확대 / 드래그 이동 · '+BASE.attr()+(RAIL.length?' · 철도 © OpenStreetMap':'');}
 function goTo(m,z){const r=canvas.getBoundingClientRect(),o=panelOffset();zoom=z;const S=baseScale*zoom;panX=(r.width+o.x)/2-r.width/2-(m[0]-cx)*S;panY=(r.height-o.y)/2-r.height/2-(m[1]-cy)*S;draw();}
 function renderStruct(){
   for(const b of document.getElementById('structEras').children)b.setAttribute('aria-pressed',String(String(sEra)===b.dataset.era));
@@ -495,7 +499,7 @@ function drawForm(w,h,S,ox,oy,vx0,vx1,vy0,vy1){
     for(const n of N){const p=n.kind==='arrow'?P2([(n.fm[0]+n.tm[0])/2,(n.fm[1]+n.tm[1])/2]):n.kind==='axis'?P2(n.pm[n.pm.length-1]):P2(n.m);
       ctx.beginPath();ctx.arc(p[0],p[1],10,0,Math.PI*2);ctx.fillStyle=pc;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#fff';ctx.stroke();ctx.fillStyle='#fff';ctx.font='800 11px Inter,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(String(n.no),p[0],p[1]+.5);
       ctx.textAlign='left';fLabel(n.title,p[0]+14,p[1],true);}}
-  document.getElementById('mapnote').textContent=(fLayers.old30?'30년 이상 건축물 '+fmt(fOldVis)+'동(화면 안) · ':'')+'도시형태 · '+M.label+' '+M.range+' '+M.title+' · 박훈(2020) 기반 · 휠 확대 / 드래그 이동 · '+BASE_ATTR;}
+  document.getElementById('mapnote').textContent=(fLayers.old30?'30년 이상 건축물 '+fmt(fOldVis)+'동(화면 안) · ':'')+'도시형태 · '+M.label+' '+M.range+' '+M.title+' · 박훈(2020) 기반 · 휠 확대 / 드래그 이동 · '+BASE.attr();}
 function renderForm(){
   for(const b of fBtns.children)b.setAttribute('aria-pressed',String(Number(b.dataset.i)===fPer));
   const M=FM.meta[fPer],P=FM.periods[M.key],PS=FM.paper[M.key],D=P.dataStats,N=FM.notes[M.key];
@@ -540,7 +544,7 @@ function drawForm2(w,h,S,ox,oy,vx0,vx1,vy0,vy1){
       if(n.kind==='arrow')fArrow(P2(n.fm),P2(n.tm),F2C,4.5);}
     for(const n of E.notes){const p=n.kind==='arrow'?P2([(n.fm[0]+n.tm[0])/2,(n.fm[1]+n.tm[1])/2]):n.kind==='axis'?P2(n.pm[n.pm.length-1]):P2(n.m);
       ctx.beginPath();ctx.arc(p[0],p[1],10,0,Math.PI*2);ctx.fillStyle=F2C;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#fff';ctx.stroke();ctx.fillStyle='#fff';ctx.font='800 11px Inter,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(String(n.no),p[0],p[1]+.5);ctx.textAlign='left';fLabel(n.title,p[0]+14,p[1],true);}}
-  document.getElementById('mapnote').textContent='도시형태2 · 3기 세분 '+E.label+' · 박훈(2020) + 건축물 승인연도 · 휠 확대 / 드래그 이동 · '+BASE_ATTR;}
+  document.getElementById('mapnote').textContent='도시형태2 · 3기 세분 '+E.label+' · 박훈(2020) + 건축물 승인연도 · 휠 확대 / 드래그 이동 · '+BASE.attr();}
 function renderForm2(){
   for(const b of f2Btns.children)b.setAttribute('aria-pressed',String(Number(b.dataset.i)===f2i));
   const E=F2.sub[f2i],prev=F2.sub[f2i-1],tot=E.mix.reduce((a,b)=>a+b,0),pct1=(a,b)=>b?(a/b*100).toFixed(1)+'%':'–';
@@ -602,7 +606,7 @@ function drawForm3(w,h,S,ox,oy,vx0,vx1,vy0,vy1){
       if(n.kind==='ring'){const p=P2(n.m),bb=F3.cityBox,B0=P2(LL([bb[0],bb[3]])),B1=P2(LL([bb[2],bb[1]]));ctx.setLineDash([3,4]);ctx.lineWidth=2.4;ctx.strokeStyle='#15803d';ctx.strokeRect(B0[0],B0[1],B1[0]-B0[0],B1[1]-B0[1]);ctx.setLineDash([]);}}
     for(const n of N){let p;if(n.kind==='link'||n.kind==='arrow')p=P2([(n.fm[0]+n.tm[0])/2,(n.fm[1]+n.tm[1])/2]);else if(n.kind==='axis')p=P2(n.pm[n.pm.length-1]);else if(n.kind==='edge'){const A=P2(n.m),k=n.len*S/mpw(n.at[1]);p=[A[0]+n.dir[0]*Math.max(60,k),A[1]-n.dir[1]*Math.max(60,k)];}else if(n.kind==='ring'){const bb=F3.cityBox;p=P2(LL([bb[0],bb[3]]));p=[p[0]+12,p[1]+12];}else p=P2(n.m);
       const col=NOTE_C[n.kind]||pc;ctx.beginPath();ctx.arc(p[0],p[1],10,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#fff';ctx.stroke();ctx.fillStyle='#fff';ctx.font='800 11px Inter,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(String(n.no),p[0],p[1]+.5);ctx.textAlign='left';fLabel(n.title,p[0]+14,p[1],true);}}
-  document.getElementById('mapnote').textContent='도시형태3 · '+M.label+' '+M.range+' '+M.title+' · 휠 확대 / 드래그 이동 · '+BASE_ATTR+(RAIL.length?' · 철도 © OpenStreetMap':'');}
+  document.getElementById('mapnote').textContent='도시형태3 · '+M.label+' '+M.range+' '+M.title+' · 휠 확대 / 드래그 이동 · '+BASE.attr()+(RAIL.length?' · 철도 © OpenStreetMap':'');}
 function renderForm3(){
   for(const b of f3Btns.children)b.setAttribute('aria-pressed',String(Number(b.dataset.i)===f3i));
   const M=F3.meta[f3i],P=F3.periods[M.key],pct1=(a,b)=>b?(a/b*100).toFixed(1)+'%':'–';
