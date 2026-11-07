@@ -8,6 +8,7 @@
 ## 자료
 - 건물: 국토교통부·브이월드 GIS건물통합정보(LT_C_BLDGINFO), 행정구역코드 51230(삼척시)
 - 철도: © OpenStreetMap contributors (ODbL)
+- 배경지도: © OpenStreetMap contributors © CARTO (래스터 타일, .env 의 CARTO_API_KEY 사용)
 - 도시형태 탭: 박훈(2020), 「삼척시 지적자료 분석을 통한 근·현대 도시형태 변화 연구」, 대한건축학회연합논문집 22(1)
 - 도시형태3 탭 인구·연표: 삼척시·삼척군 통계연보, 행정안전부 주민등록인구통계(2026.6)
 
@@ -17,4 +18,4 @@ node scripts/download_and_analyze.mjs   # 상위 폴더 .env의 V-WORLD_KEY 필�
 node scripts/analyze_building_use.mjs
 node scripts/create_preview.mjs         # reports/building_age_preview.html 생성
 ```
-`reports/vworld_key.js`(브이월드 키)는 저장소에 올리지 않습니다. 키 파일이 없으면 배경지도는 Esri 타일로 표시됩니다.
+지도 데이터는 `reports/building_age_data.js`로 분리되어 페이지가 열린 뒤 비동기로 불러옵니다.

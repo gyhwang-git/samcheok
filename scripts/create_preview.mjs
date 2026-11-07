@@ -38,6 +38,9 @@ function ringCenter(ring) {
   return [x / (3 * twiceArea), y / (3 * twiceArea)];
 }
 
+// 링 [[lon,lat],...] → [x0,y0,dx1,dy1,...] (1e-5도 정수, 첫 점 절대값 이후 차분)
+function encodeRing(ring) { const o = []; let px = 0, py = 0; for (const [x, y] of ring) { const X = Math.round(x * 1e5), Y = Math.round(y * 1e5); o.push(X - px, Y - py); px = X; py = Y; } return o; }
+
 const source = JSON.parse(await fs.readFile(dataPath, 'utf8'));
 const labels = ['0–9년', '10–19년', '20–29년', '30–39년', '40–49년', '50–59년', '60–69년', '70–79년', '80–89년', '90–99년', '100년 이상', '승인일 미상'];
 const colors = ['#14b8a6', '#22c55e', '#eab308', '#f97316', '#ef4444', '#a855f7', '#7c3aed', '#4f46e5', '#2563eb', '#0f766e', '#475569', '#cbd5e1'];
@@ -66,7 +69,7 @@ for (const feature of source.features) {
     return [lon, lat];
   }));
   const center = rings.length ? ringCenter(rings[0]) : [0, 0];
-  compact.push([group, String(p.useapr_day ?? ''), String(p.bld_nm ?? ''), row.code, Number(center[0].toFixed(5)), Number(center[1].toFixed(5)), rings,
+  compact.push([group, String(p.useapr_day ?? ''), String(p.bld_nm ?? ''), row.code, Number(center[0].toFixed(5)), Number(center[1].toFixed(5)), rings.map(encodeRing),
     useGroupIndex(row.code), row.floors ?? 0, row.area == null ? 0 : Math.round(row.area * 10) / 10]);
 }
 
@@ -123,8 +126,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
 @media(max-width:1100px){.mapnote{display:none}}
 @media(max-width:760px){.panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:46vh}body.collapsed .panel{transform:translateY(calc(100% + 16px))}.toggle,body.collapsed .toggle{left:8px;top:8px}.legend{left:8px;right:56px;top:48px;bottom:auto;max-width:none;padding:7px 10px}.legend span{font-size:10px}.zoom{right:8px;top:8px}}
 </style>
-<link rel="preconnect" href="https://server.arcgisonline.com" crossorigin><link rel="preconnect" href="https://api.vworld.kr" crossorigin>
-<script src="vworld_key.js"></script>
+<link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin>
 </head>
 <body>
 <script>window.__BOUNDS=__BOUNDS__;</script>
@@ -133,7 +135,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
 <aside class="panel glass" id="panel">
   <div class="eyebrow">Samcheok · Building age &amp; use</div><h1>삼척시 건물 노후도·용도</h1><p class="sub">사용승인일 기준 경과연수와 건축물대장 주용도를 지도에서 비교합니다.</p><span class="badge">분석 기준일 · 2026.11.04</span>
   <div class="tabs" role="tablist" style="grid-template-columns:repeat(4,1fr)"><button role="tab" id="tabAge" aria-selected="true" aria-controls="paneAge">노후도</button><button role="tab" id="tabUse" aria-selected="false" aria-controls="paneUse">건물 용도</button><button role="tab" id="tabPotato" aria-selected="false" aria-controls="panePotato">감자도</button><button role="tab" id="tabStruct" aria-selected="false" aria-controls="paneStruct">공간구조도</button><button role="tab" id="tabForm" aria-selected="false" aria-controls="paneForm">도시형태</button><button role="tab" id="tabForm2" aria-selected="false" aria-controls="paneForm2">도시형태2</button><button role="tab" id="tabForm3" aria-selected="false" aria-controls="paneForm3">도시형태3</button></div>
-  <div class="controls"><label for="filter" id="filterLabel">연령대</label><select id="filter"></select><label for="basemap">배경</label><select id="basemap"><option value="white">회색지도</option><option value="Base">기본지도</option><option value="Satellite">영상</option><option value="none">없음</option></select><button id="resetView">전체 보기</button></div>
+  <div class="controls"><label for="filter" id="filterLabel">연령대</label><select id="filter"></select><label for="basemap">배경</label><select id="basemap"><option value="light">밝은 지도</option><option value="voyager">기본 지도</option><option value="dark">어두운 지도</option><option value="none">없음</option></select><button id="resetView">전체 보기</button></div>
   <div id="paneAge" role="tabpanel">
     <section class="metrics">
       <article class="metric"><div class="k">삼척시 건물</div><strong>57,619</strong><small>행정경계 안 피처</small></article>
@@ -220,7 +222,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
     <div class="disclaimer" id="f3Disc"></div>
   </div>
   <div class="detail" id="detail"><h3>건물 정보</h3><p>지도에서 건물 도형을 눌러 속성을 확인하세요.</p></div>
-  <footer class="footer">출처: 국토교통부·브이월드 GIS건물통합정보 API · <a href="https://www.data.go.kr/catalog/15083092/fileData.json" target="_blank" rel="noreferrer">공식 데이터 정보</a> · 용도: 건축물대장 주용도코드 · 배경지도: 브이월드 WMTS(같은 폴더에 vworld_key.js가 있을 때), 없으면 Esri 타일(© Esri, HERE, Garmin, © OpenStreetMap contributors)</footer>
+  <footer class="footer">출처: 국토교통부·브이월드 GIS건물통합정보 API · <a href="https://www.data.go.kr/catalog/15083092/fileData.json" target="_blank" rel="noreferrer">공식 데이터 정보</a> · 용도: 건축물대장 주용도코드 · 배경지도: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions" target="_blank" rel="noreferrer">CARTO</a></footer>
 </aside>
 <button class="toggle" id="togglePanel" aria-expanded="true">◀ 패널 접기</button>
 <div class="zoom"><button id="zoomIn" aria-label="확대">+</button><button id="zoomOut" aria-label="축소">−</button></div>
@@ -228,32 +230,24 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;font-weight:700;co
 <div class="legend glass" id="legend"></div>
 <div id="tip" role="tooltip"></div>
 <script>
-// ---------- 배경지도 (데이터와 분리, 페이지 열리자마자 표시) ----------
+// ---------- 배경지도: CARTO 래스터 타일 (데이터와 분리, 페이지 열리자마자 표시) ----------
 (function(){
-  const VKEY=window.VWORLD_KEY||'',bc=document.getElementById('basemapCanvas'),bx=bc.getContext('2d'),sel=document.getElementById('basemap');
+  const KEY='__CARTO_KEY__',bc=document.getElementById('basemapCanvas'),bx=bc.getContext('2d'),sel=document.getElementById('basemap');
   const mx=lon=>(lon+180)/360,my=lat=>{const s=Math.sin(lat*Math.PI/180);return .5-Math.log((1+s)/(1-s))/(4*Math.PI);};
-  // 키가 없으면(공개 배포본) Esri 타일 사용. OSM 공식 타일은 github.io 리퍼러에 429를 반환해 쓰지 않음
-  // Esri 회색·도로 지도는 한국 지역에서 z13까지만 실제 데이터가 있고 z14부터 'Map data not yet available' 타일이 옴 → z13 타일을 확대해 사용. 영상은 z19까지 있음
-  const BASEMAPS={white:{layer:'white',ext:'png',max:18,esri:'Canvas/World_Light_Gray_Base',emax:13},Base:{layer:'Base',ext:'png',max:19,esri:'World_Street_Map',emax:13},Satellite:{layer:'Satellite',ext:'jpeg',max:19,esri:'World_Imagery',emax:19}};
-    const cache=new Map();let view=null,pend=false,useV=!!VKEY,vOk=0,vErr=0;
-  const relabel=()=>{if(useV)return;const g=sel.querySelector('option[value="white"]');if(g)g.textContent='밝은 지도';const b=sel.querySelector('option[value="Base"]');if(b)b.textContent='기본 지도';const o=sel.querySelector('option[value="Satellite"]');if(o)o.textContent='위성 영상';};
+  const STYLES={light:'light_all',voyager:'voyager',dark:'dark_all'},MAXZ=19;
+  const cache=new Map();let view=null,pend=false;
   const req=()=>{if(pend)return;pend=true;requestAnimationFrame(()=>{pend=false;render();});};
-  const keyOf=(bm,z,y,x)=>(useV?bm.layer:bm.esri)+'/'+z+'/'+y+'/'+x;
-  // 브이월드 타일이 연속 실패하면(예: 해외 IP·VPN·Cloudflare WARP 경유 시 차단) Esri로 자동 전환
-  const vFail=()=>{vErr++;if(useV&&vOk===0&&vErr>=4){useV=false;relabel();req();if(window.BASE.onSource)window.BASE.onSource();}};
-  function getTile(bm,z,x,y){const k=keyOf(bm,z,y,x);let t=cache.get(k);if(!t){t=new Image();t.decoding='async';const isV=useV;t.onload=()=>{if(isV)vOk++;req();};t.onerror=()=>{if(isV)vFail();};t.src=isV?'https://api.vworld.kr/req/wmts/1.0.0/'+VKEY+'/'+k+'.'+bm.ext:'https://server.arcgisonline.com/ArcGIS/rest/services/'+bm.esri+'/MapServer/tile/'+z+'/'+y+'/'+x;cache.set(k,t);if(cache.size>600)cache.delete(cache.keys().next().value);}return t;}
+  function getTile(st,z,x,y){const k=st+'/'+z+'/'+x+'/'+y;let t=cache.get(k);if(!t){t=new Image();t.decoding='async';t.onload=req;t.src='https://basemaps.cartocdn.com/rastertiles/'+k+'.png'+(KEY?'?key='+KEY:'');cache.set(k,t);if(cache.size>500)cache.delete(cache.keys().next().value);}return t;}
   const ready=t=>t&&t.complete&&t.naturalWidth>0;
   function render(){if(!view)return;const r=bc.getBoundingClientRect(),w=r.width,h=r.height,dpr=window.devicePixelRatio||1,W=Math.round(w*dpr),H=Math.round(h*dpr);if(bc.width!==W||bc.height!==H){bc.width=W;bc.height=H;}
-    bx.setTransform(dpr,0,0,dpr,0,0);bx.clearRect(0,0,w,h);const bm=BASEMAPS[sel.value];if(!bm)return;const {cx,cy,S,panX,panY}=view;
-    const z=Math.max(6,Math.min(useV?bm.max:bm.emax,Math.round(Math.log2(S/256)))),n=2**z,ts=S/n;
+    bx.setTransform(dpr,0,0,dpr,0,0);bx.clearRect(0,0,w,h);const st=STYLES[sel.value];bc.style.background=sel.value==='dark'?'#262626':'#eef2f6';if(!st)return;const {cx,cy,S,panX,panY}=view;
+    const z=Math.max(6,Math.min(MAXZ,Math.round(Math.log2(S/256)))),n=2**z,ts=S/n;
     const tx0=Math.floor((cx+(-w/2-panX)/S)*n),tx1=Math.floor((cx+(w/2-panX)/S)*n),ty0=Math.max(0,Math.floor((cy+(-h/2-panY)/S)*n)),ty1=Math.min(n-1,Math.floor((cy+(h/2-panY)/S)*n));
-    // 화면 중앙에서 가까운 타일부터 요청
-    const list=[];for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++)list.push([tx,ty]);const mxT=(tx0+tx1)/2,myT=(ty0+ty1)/2;list.sort((a,b)=>Math.hypot(a[0]-mxT,a[1]-myT)-Math.hypot(b[0]-mxT,b[1]-myT));
-    for(const [tx,ty] of list){const xx=((tx%n)+n)%n,sx=w/2+(tx/n-cx)*S+panX,sy=h/2+(ty/n-cy)*S+panY,t=getTile(bm,z,xx,ty);
+    const list=[];for(let ty=ty0;ty<=ty1;ty++)for(let tx=tx0;tx<=tx1;tx++)list.push([tx,ty]);const cxT=(tx0+tx1)/2,cyT=(ty0+ty1)/2;list.sort((p,q)=>Math.hypot(p[0]-cxT,p[1]-cyT)-Math.hypot(q[0]-cxT,q[1]-cyT));
+    for(const [tx,ty] of list){const xx=((tx%n)+n)%n,sx=w/2+(tx/n-cx)*S+panX,sy=h/2+(ty/n-cy)*S+panY,t=getTile(st,z,xx,ty);
       if(ready(t)){bx.drawImage(t,sx,sy,ts+.5,ts+.5);continue;}
-      for(let d=1;d<=5&&z-d>=6;d++){const p=cache.get(keyOf(bm,z-d,ty>>d,xx>>d));if(ready(p)){const f=1<<d,s2=256/f;bx.drawImage(p,(xx%f)*s2,(ty%f)*s2,s2,s2,sx,sy,ts+.5,ts+.5);break;}}}}
-  relabel();
-  window.BASE={VKEY,mx,my,setView(v){view=v;render();},render,attr:()=>useV?'배경 © VWorld':(VKEY?'브이월드 연결 실패 → ':'')+'배경 © Esri, HERE, Garmin, © OpenStreetMap contributors',onSource:null};
+      for(let d=1;d<=5&&z-d>=6;d++){const p=cache.get(st+'/'+(z-d)+'/'+(xx>>d)+'/'+(ty>>d));if(ready(p)){const f=1<<d,s2=256/f;bx.drawImage(p,(xx%f)*s2,(ty%f)*s2,s2,s2,sx,sy,ts+.5,ts+.5);break;}}}}
+  window.BASE={VKEY:'',mx,my,setView(v){view=v;render();},render,attr:()=>'배경 © OpenStreetMap contributors © CARTO',onSource:null};
   sel.addEventListener('change',render);window.addEventListener('resize',render);
   // 데이터가 오기 전 초기 화면: 본체의 fitView와 같은 계산
   const b=window.__BOUNDS,B=[mx(b[0]),my(b[3]),mx(b[2]),my(b[1])],panel=document.getElementById('panel'),wd=innerWidth,ht=innerHeight;
@@ -343,7 +337,7 @@ document.getElementById('panel').addEventListener('mouseleave',()=>{tip.style.di
 // ---------- 지도 ----------
 // 웹 메르카토르(0~1 월드 좌표)로 미리 변환해 브이월드 WMTS 타일과 좌표계를 맞춘다. 경계상자는 f[10].
 const VKEY=BASE.VKEY,basemapSel=document.getElementById('basemap'),mx=BASE.mx,my=BASE.my;
-for(const f of features){let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;for(const ring of f[6])for(const p of ring){p[0]=mx(p[0]);p[1]=my(p[1]);if(p[0]<x0)x0=p[0];if(p[0]>x1)x1=p[0];if(p[1]<y0)y0=p[1];if(p[1]>y1)y1=p[1];}f[4]=mx(f[4]);f[5]=my(f[5]);f[10]=[x0,y0,x1,y1];}
+for(const f of features){let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;f[6]=f[6].map(e=>{const r=new Array(e.length/2);let X=0,Y=0;for(let i=0,j=0;i<e.length;i+=2,j++){X+=e[i];Y+=e[i+1];const px=mx(X/1e5),py=my(Y/1e5);r[j]=[px,py];if(px<x0)x0=px;if(px>x1)x1=px;if(py<y0)y0=py;if(py>y1)y1=py;}return r;});f[4]=mx(f[4]);f[5]=my(f[5]);f[10]=[x0,y0,x1,y1];}
 const b=payload.bounds,B=[mx(b[0]),my(b[3]),mx(b[2]),my(b[1])],cx=(B[0]+B[2])/2,cy=(B[1]+B[3])/2;let zoom=1,panX=0,panY=0,baseScale=1,drag=null,lastPointer=null;
 const panelEl=document.getElementById('panel'),toggleBtn=document.getElementById('togglePanel');
 function panelOffset(){if(document.body.classList.contains('collapsed'))return {x:0,y:0};return innerWidth>760?{x:panelEl.offsetWidth+24,y:0}:{x:0,y:panelEl.offsetHeight+16};}
@@ -739,20 +733,15 @@ const payload = JSON.stringify({
   form3: computeUrbanForm3(source.features),
 });
 const dataVer = (await import('node:crypto')).createHash('sha1').update(payload).digest('hex').slice(0, 10);
-const html = template.replace('__BOUNDS__', () => JSON.stringify([minLon, minLat, maxLon, maxLat])).replace('__DATAVER__', dataVer);
+// CARTO 래스터 타일 키(브라우저용 공개 키, 상위 폴더 .env 의 CARTO_API_KEY). 브이월드 키는 더 이상 쓰지 않음
+const envText = await fs.readFile(path.resolve(projectDir, '..', '.env'), 'utf8').catch(() => '');
+const cartoKey = envText.match(/^\s*CARTO_API_KEY\s*=\s*["']?([^"'\r\n]+)/m)?.[1]?.trim() ?? '';
+if (!cartoKey) console.warn('.env 에 CARTO_API_KEY 가 없어 CARTO 타일에 "API KEY REQUIRED" 표시가 나올 수 있습니다.');
+const html = template.replace('__CARTO_KEY__', () => cartoKey).replace('__BOUNDS__', () => JSON.stringify([minLon, minLat, maxLon, maxLat])).replace('__DATAVER__', dataVer);
 const outPath = path.join(reportDir, 'building_age_preview.html');
 await fs.mkdir(reportDir, { recursive: true });
 await fs.writeFile(outPath, html, 'utf8');
 const dataPath2 = path.join(reportDir, 'building_age_data.js');
 await fs.writeFile(dataPath2, '// create_preview.mjs 가 생성한 지도 데이터\nwindow.__PAYLOAD=' + payload + ';\n', 'utf8');
 
-// 브이월드 키는 HTML에 넣지 않고 같은 폴더의 vworld_key.js 로 분리한다 (공유 금지).
-const envText = await fs.readFile(path.resolve(projectDir, '..', '.env'), 'utf8').catch(() => '');
-const vworldKey = envText.match(/^\s*V-WORLD_KEY\s*=\s*["']?([^"'\r\n]+)/m)?.[1]?.trim();
-if (vworldKey) {
-  if (html.includes(vworldKey)) throw new Error('HTML에 브이월드 키가 포함됨');
-  await fs.writeFile(path.join(reportDir, 'vworld_key.js'), `// .env 에서 생성됨. 공유·커밋 금지\nwindow.VWORLD_KEY = ${JSON.stringify(vworldKey)};\n`, 'utf8');
-} else {
-  console.warn('.env 에 V-WORLD_KEY 가 없어 배경지도 없이 표시됩니다.');
-}
 console.log(`미리보기 작성: ${outPath} (${(Buffer.byteLength(html) / 1024).toFixed(0)} KB) + 데이터 ${(Buffer.byteLength(payload) / 1024 / 1024).toFixed(1)} MB`);
