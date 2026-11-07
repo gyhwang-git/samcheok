@@ -5,6 +5,7 @@
 - 도시 비교(삼척 도시형태3 기준 3단계 분석 + 지도 주석, 삼척 공간구조도 방식의 공간구조도 탭, 페이지 상단 삼척/부산/여수 전환)
   - 부산: https://gyhwang-git.github.io/samcheok/reports/busan.html
   - 여수: https://gyhwang-git.github.io/samcheok/reports/yeosu.html
+  - 광주·전주·순천·태안: reports/gwangju.html · jeonju.html · suncheon.html · taean.html
 - 웹 지도: https://gyhwang-git.github.io/samcheok/ (탭: 노후도 · 건물 용도 · 감자도 · 공간구조도 · 도시형태 · 도시형태2 · 도시형태3 · 변화 유형)
 - 보고서: [reports/building_age_analysis.md](reports/building_age_analysis.md), [reports/building_use_analysis.md](reports/building_use_analysis.md), [reports/urban_change_types.md](reports/urban_change_types.md)
 

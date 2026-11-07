@@ -31,7 +31,7 @@ const inRing = (x, y, r) => { let c = false; for (let i = 0, j = r.length - 1; i
 const inGeom = (x, y, g) => (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).some((p) => inRing(x, y, p[0]) && !p.slice(1).some((h) => inRing(x, y, h)));
 
 // 부산 시군구 경계(26xxx)
-const sigg = (await req({ data: 'LT_C_ADSIGG_INFO', geomFilter: `BOX(${SEARCH})`, size: '100', page: '1' })).filter((f) => String(f.properties?.sig_cd).startsWith(PREFIX));
+const sigg = (await req({ data: 'LT_C_ADSIGG_INFO', geomFilter: `BOX(${SEARCH})`, size: '100', page: '1' })).filter((f) => PREFIX.split(',').some((p) => String(f.properties?.sig_cd).startsWith(p))); // 여러 코드는 쉼표로
 if (!sigg.length) throw new Error(SLUG + ' 시군구 경계를 찾지 못했습니다.');
 const all = sigg.flatMap((f) => (f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates).flatMap((p) => p[0]));
 const B = [Math.min(...all.map((p) => p[0])), Math.min(...all.map((p) => p[1])), Math.max(...all.map((p) => p[0])), Math.max(...all.map((p) => p[1]))];
@@ -49,8 +49,9 @@ for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
   const st = JSON.parse(await fs.readFile(sf, 'utf8').catch(() => '{"page":0,"done":false}'));
   if (st.page > 0) { const prev = (await fs.readFile(tf, 'utf8').catch(() => '')).split('\n').filter(Boolean).map((l) => JSON.parse(l)); for (const r of prev) { out.push(r); kept++; } console.log(`칸 ${i},${j}: 저장분 ${prev.length.toLocaleString()}건, 페이지 ${st.page}까지 완료${st.done ? '(칸 완료)' : ''}`); }
   if (st.done) continue;
+  let stale = 0; // 새 건물이 없는 페이지가 이어지면(브이월드가 같은 결과를 반복) 이 칸을 끝냄
   for (let page = st.page + 1; page <= 1000; page++) {
-    const pageRows = [];
+    const pageRows = []; let fresh = 0;
     const fs_ = await req({ data: 'LT_C_BLDGINFO', geomFilter: `BOX(${box.join(',')})`, size: '1000', page: String(page) });
     for (const f of fs_) {
       const g = f.geometry; if (!g) continue;
@@ -58,7 +59,7 @@ for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
       const x = ring.reduce((s, q) => s + q[0], 0) / ring.length, y = ring.reduce((s, q) => s + q[1], 0) / ring.length;
       if (x < box[0] || x >= box[2] || y < box[1] || y >= box[3]) continue; // 칸 경계에 걸친 건물은 중심점이 속한 칸에서만
       const p = f.properties ?? {}, id = f.id ?? `${x.toFixed(6)},${y.toFixed(6)}`;
-      if (seen.has(id)) continue; seen.add(id);
+      if (seen.has(id)) continue; seen.add(id); fresh++;
       if (!sigg.some((s) => inGeom(x, y, s.geometry))) continue;
       const row = [Number(x.toFixed(5)), Number(y.toFixed(5)), String(p.useapr_day ?? ''), String(p.usability ?? ''), Number(p.grnd_flr) || 0, String(p.bld_nm ?? ''), String(p.sig_cd ?? p.bjd_cd ?? '').slice(0, 5)];
       out.push(row); pageRows.push(row); kept++;
@@ -66,7 +67,8 @@ for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
     if (pageRows.length) await fs.appendFile(tf, pageRows.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
     await fs.writeFile(sf, JSON.stringify({ page, done: fs_.length < 1000 }), 'utf8');
     if (page % 20 === 0) console.log(`칸 ${i},${j} 페이지 ${page}: 누적 ${out.length.toLocaleString()}건`);
-    if (fs_.length < 1000) break;
+    stale = fresh ? 0 : stale + 1;
+    if (fs_.length < 1000 || stale >= 20) { if (stale >= 20) { console.log(`칸 ${i},${j}: 새 건물 없는 페이지 20회 → 다음 칸`); await fs.writeFile(sf, JSON.stringify({ page, done: true }), 'utf8'); } break; }
     if (page === 1000) throw new Error('페이지 한도 초과');
   }
   console.log(`칸 ${i},${j} 완료: ${kept.toLocaleString()}건 (전체 ${out.length.toLocaleString()})`);

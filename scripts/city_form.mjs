@@ -59,7 +59,7 @@ export function computeCity(rows, units, pop, cfg) {
   const uY = pop.unitYears;
   const popAt = (cd, y) => { const i = uY.indexOf(y); return i < 0 ? null : pop.units[cd]?.pop[i] ?? null; };
   const centroidOf = (d) => { let best = null, area = -1; for (const p of d.polys) { const a = ringArea(p[0]); if (a > area) { area = a; best = p[0]; } } let sx = 0, sy = 0; for (const [x, y] of best) { sx += x; sy += y; } return [Number((sx / best.length).toFixed(5)), Number((sy / best.length).toFixed(5))]; };
-  const dInfo = us.map((d) => ({ cd: d.cd, name: d.name, at: centroidOf(d), region: regionOf[d.cd] ?? null, ha: Math.round(d.polys.reduce((s, p) => s + ringArea(p[0]), 0) * kx * ky / 10000), rings: d.polys.map((p) => simplify(p[0], cfg.unitSimplify ?? 0.0006).map(([x, y]) => [Number(x.toFixed(5)), Number(y.toFixed(5))])).filter((r) => r.length >= 4) }));
+  const dInfo = us.map((d) => ({ cd: d.cd, name: d.name, at: centroidOf(d), region: regionOf[d.cd] ?? null, ha: Math.round(d.polys.reduce((s, p) => s + ringArea(p[0]), 0) * kx * ky / 10000), rings: d.polys.map((p) => { const sr = simplify(p[0], cfg.unitSimplify ?? 0.0006); return (sr.length >= 4 ? sr : p[0]).map(([x, y]) => [Number(x.toFixed(5)), Number(y.toFixed(5))]); }).filter((r) => r.length >= 4) })); // 작은 단위가 단순화로 사라지지 않게
 
   const periods = {};
   for (const Pd of P) {
@@ -78,7 +78,12 @@ export function computeCity(rows, units, pop, cfg) {
       pop: { from: pop.total[Pd.popFrom], to: pop.total[Pd.popTo], fromY: Pd.popFrom, toY: Pd.popTo },
     };
   }
+  // 건물 데이터의 사용승인일 기록 범위: 2010~2014년 연평균의 30% 이상 기록된 마지막 해(지역마다 갱신 시점이 다름)
+  const yc = {}; for (const p of pts) if (p.year != null) yc[p.year] = (yc[p.year] ?? 0) + 1;
+  const base = [2010, 2011, 2012, 2013, 2014].reduce((t, y) => t + (yc[y] ?? 0), 0) / 5;
+  let dataLastYear = 2014; for (let y = 2015; y <= 2026; y++) if ((yc[y] ?? 0) >= Math.max(20, base * 0.3)) dataLastYear = y;
   return {
+    dataLastYear, yearCounts: yc,
     cfg: { slug: cfg.slug, name: cfg.name, unitLabel: cfg.unitLabel, basis: cfg.basis, regionText: cfg.regionText, limits: cfg.limits },
     meta: P, timeline: cfg.timeline, regions: cfg.regions.map(({ key, label, color }) => ({ key, label, color })), districts: dInfo, periods, grid, gridM: G,
     total: pop.total, popSource: pop.source, popNote: pop.note, n: pts.length, dated: pts.filter((p) => p.year != null).length, lat: latS / rows.length,

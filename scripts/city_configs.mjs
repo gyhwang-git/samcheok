@@ -2,10 +2,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { busanNotes } from './city_notes.mjs';
+import { MORE_CITIES } from './city_configs_more.mjs';
 
 export const CITIES = {
   busan: {
-    slug: 'busan', name: '부산광역시', short: '부산', split: '1995년·2015년',
+    slug: 'busan', name: '부산광역시', short: '부산', autoTimeline: false, split: '1995년·2015년',
     eyebrow: 'Busan · Urban spatial change', unitLabel: '구·군',
     structOpts: { peakR: 25, maxCenters: 20, catchM: 3000, levelRatio: 0.55, regionalM: 8000 }, // 대도시: 중심지 간격·개수·위계 기준 조정,
     periods: [
@@ -35,7 +36,7 @@ export const CITIES = {
     },
   },
   yeosu: {
-    slug: 'yeosu', name: '여수시', short: '여수', split: '1998년·2010년', eyebrow: 'Yeosu · Urban spatial change', unitLabel: '읍면동', unitSimplify: 0.0003,
+    slug: 'yeosu', name: '여수시', short: '여수', autoTimeline: false, split: '1998년·2010년', eyebrow: 'Yeosu · Urban spatial change', unitLabel: '읍면동', unitSimplify: 0.0003,
     fitBox: [127.56, 34.6, 127.8, 34.92], // 첫 화면: 시가지·돌산·화양 (삼산면 거문도 등 먼 섬 제외)
     thresholds: { housing: 1.5, industry: 0.5, newArea: 1.0 },
     periods: [
@@ -64,4 +65,5 @@ export const CITIES = {
     },
   },
 };
-export const SWITCH = [['삼척', 'building_age_preview.html'], ['부산', 'busan.html'], ['여수', 'yeosu.html']];
+Object.assign(CITIES, MORE_CITIES);
+export const SWITCH = [['삼척', 'building_age_preview.html'], ['부산', 'busan.html'], ['여수', 'yeosu.html'], ['광주', 'gwangju.html'], ['전주', 'jeonju.html'], ['순천', 'suncheon.html'], ['태안', 'taean.html']];

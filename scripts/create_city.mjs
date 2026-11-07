@@ -18,13 +18,27 @@ const rows = JSON.parse(await fs.readFile(path.join(rawDir, C.slug + '_buildings
 const { units, pop } = await C.load(rawDir);
 const result = computeCity(rows, units, pop, C);
 result.notes = C.notes ? C.notes(result) : null;
+// 연표 자동 보강: 시기 인구 증감과 단위 지역 증감 상위(데이터로 계산). 설정의 연표 뒤에 붙임
+if (C.autoTimeline !== false) for (const P of C.periods) {
+  const p = result.periods[P.key], tl = (result.timeline[P.key] = [...(C.timeline?.[P.key] ?? [])]);
+  const f1 = (v) => (v / 1e4).toFixed(1) + '만', pc = (v) => (v > 0 ? '+' : '') + v.toFixed(1) + '%';
+  if (!tl.some(([, t]) => /인구 [0-9.]+만 →/.test(t))) tl.push([P.popFrom + '~' + P.popTo, '인구 ' + f1(p.pop.from) + ' → ' + f1(p.pop.to) + ' 명 (' + pc(((p.pop.to - p.pop.from) / p.pop.from) * 100) + ')']);
+  if (p.dpop && !C.timeline?.[P.key]?.some(([, t]) => /증가|감소/.test(t))) {
+    const arr = result.districts.map((d) => ({ d, v: p.dpop[d.cd] })).filter((x) => x.v && x.v.from >= 1000).sort((x, y) => y.v.chg - x.v.chg);
+    const up = arr.filter((x) => x.v.chg > 0).slice(0, 2), dn = arr.filter((x) => x.v.chg < 0).slice(-2).reverse();
+    if (up.length) tl.push([P.unitFrom + '~' + P.unitTo, '증가 상위: ' + up.map((x) => x.d.name + ' ' + pc(x.v.chg)).join(', ')]);
+    if (dn.length) tl.push([P.unitFrom + '~' + P.unitTo, '감소 상위: ' + dn.map((x) => x.d.name + ' ' + pc(x.v.chg)).join(', ')]);
+  }
+}
 // 공간구조도(삼척 '공간구조도' 탭과 같은 방법): 시기는 이 도시의 3단계 말 기준 누적 + 현재 전체
 const spts = [];
 for (const [lon, lat, apr, code, fl, nm] of rows) { const cls = classifyPlan({ usability: code, bld_nm: nm, grnd_flr: fl }); if (cls < 0) continue; spts.push({ lon, lat, cls, name: nm, year: ageFor(apr) == null ? null : Number(String(apr).slice(0, 4)) }); }
 const sres = computePotato(spts, { structureOnly: true, topName: null, eras: C.periods.map((p) => ({ key: p.key, label: p.label + ' ' + p.range + ' 말까지', start: p.start, end: p.end })), allSplit: [C.periods[1].end, C.periods[2].start], zoneSimplify: 0.8, zoneChaikin: 2, zoneMinHa: 5, ...(C.structOpts ?? {}) });
 // 중심지 이름: 위치한 단위 지역으로 다시 붙임(부산 '구 + 동 사무소명', 여수 '읍면동')
 const inR = (x, y, r) => { let k = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const [xi, yi] = r[i], [xj, yj] = r[j]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) k = !k; } return k; };
-const unitAt = ([x, y]) => result.districts.find((d) => d.rings.some((r) => inR(x, y, r)));
+// 원래(단순화 전) 경계로 판정 — 작은 동은 단순화하면 모양이 크게 바뀜
+const rawUnits = units.features.map((f) => ({ name: f.properties.name, polys: f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates }));
+const unitAt = ([x, y]) => rawUnits.find((d) => d.polys.some((p) => inR(x, y, p[0]) && !p.slice(1).some((h) => inR(x, y, h))));
 // 가장 가까운 읍면동 사무소(행정복지센터·주민센터) 이름 — 건물명에서 찾음
 const OFF = /([가-힣]+[0-9·]*(?:동|읍|면))\s*(?:행정복지센터|주민센터|사무소)/;
 const offices = []; for (const r of rows) { const m = String(r[5]).match(OFF); if (m) offices.push([r[0], r[1], m[1]]); }
@@ -36,7 +50,7 @@ for (const sc of Object.values(sres.structure.scenes)) {
     const old = ctr.name;
     const u = unitAt(ctr.at), raw = u ? String(ctr.name ?? '').replace(/ \d+$/, '') : '시 경계 인근';
     const off = nearOffice(ctr.at);
-    let nm = C.unitLabel !== '읍면동' ? (u ? u.name + (off ? ' ' + off : '') : off ?? raw) : (u ? u.name : raw);
+    let nm = /^구/.test(C.unitLabel) ? (u ? u.name + (off ? ' ' + off : '') : off ?? raw) : (u ? u.name : raw);
     seen[nm] = (seen[nm] ?? 0) + 1; if (seen[nm] > 1) nm += ' ' + seen[nm];
     ctr.name = nm; ren[old] = nm;
   }
@@ -232,7 +246,7 @@ function render(){
   if(P.dpop){const arr=Object.entries(P.dpop).filter(([,v])=>v).map(([cd,v])=>({cd,name:D.districts.find(d=>d.cd===cd).name,...v}));const up=arr.filter(a=>a.chg>0).sort((a,b)=>b.chg-a.chg),dn=arr.filter(a=>a.chg<0).sort((a,b)=>a.chg-b.chg);
     space='인구 증가 '+up.length+'곳'+(up.length?' ('+up.slice(0,3).map(a=>a.name+' '+fp(a.chg)).join(', ')+')':'')+', 감소 '+dn.length+'곳 (최대 '+dn.slice(0,3).map(a=>a.name+' '+fp(a.chg)).join(', ')+')';}
   else space=U+'별 인구 자료가 없는 시기라 건물 자료로만 표시합니다. 이 시기 신축은 '+D.regions[topReg].label+'에 가장 많습니다.';
-  document.getElementById('head').innerHTML='<article class="metric" style="border-left:5px solid '+M.color+'"><div class="k">'+M.label+' · '+M.range+'</div><strong class="txt">'+esc(M.title)+'</strong></article><div class="sum3"><b>인구</b> '+(P.pop.from/1e4).toFixed(1)+'만 → '+(P.pop.to/1e4).toFixed(1)+'만 명 ('+P.pop.fromY+'~'+P.pop.toY+', '+fp(popChg)+')<br><b>공간</b> '+esc(space)+'<br><b>신축 건물(현존, 승인 기준)</b> '+fmt(P.n)+'동 · 5층 이상 '+pct(P.five,P.n)+' · 최다 지역 '+esc(D.regions[topReg].label)+' '+pct(P.reg[topReg],regT)+'</div>';
+  document.getElementById('head').innerHTML='<article class="metric" style="border-left:5px solid '+M.color+'"><div class="k">'+M.label+' · '+M.range+'</div><strong class="txt">'+esc(M.title)+'</strong></article><div class="sum3"><b>인구</b> '+(P.pop.from/1e4).toFixed(1)+'만 → '+(P.pop.to/1e4).toFixed(1)+'만 명 ('+P.pop.fromY+'~'+P.pop.toY+', '+fp(popChg)+')<br><b>공간</b> '+esc(space)+'<br><b>신축 건물(현존, 승인 기준)</b> '+fmt(P.n)+'동 · 5층 이상 '+pct(P.five,P.n)+' · 최다 지역 '+esc(D.regions[topReg].label)+' '+pct(P.reg[topReg],regT)+(M.end>D.dataLastYear?'<br><b style=\"color:#b45309\">⚠ 건물 자료 주의</b> 이 지역 건물 데이터는 사용승인일이 '+D.dataLastYear+'년까지만 충분히 기록되어 있습니다(이후 갱신 지연 추정). '+(M.start>D.dataLastYear?'이 시기 신축은 건물 데이터로 분석할 수 없어 인구 자료 위주로 보십시오.':'이 시기 신축은 '+D.dataLastYear+'년까지만 반영됩니다.'):'')+'</div>';
   if(D.notes){const SRC={'건물':'건물 데이터','KOSIS':'KOSIS 인구','KOSIS·건물':'KOSIS 인구·건물','건물·KOSIS':'건물·KOSIS 인구','일반':'행정 변화'};const ul=document.getElementById('nList');ul.innerHTML='';
     for(const x of D.notes[M.key]||[]){const col=x.kind==='edge'?'#7c3aed':NC[x.kind]||M.color,li=document.createElement('li');li.tabIndex=0;li.innerHTML='<i class="num-key" style="background:'+col+'">'+x.no+'</i><span><b>'+esc(x.title)+'</b><br>'+esc(x.text)+' <small>— '+(SRC[x.src]||esc(x.src))+'</small></span>';
       const go=()=>goTo(x.m||[(x.fm[0]+x.tm[0])/2,(x.fm[1]+x.tm[1])/2],Math.max(zoom,4));li.addEventListener('click',go);li.addEventListener('keydown',e=>{if(e.key==='Enter')go();});ul.append(li);}}
@@ -243,7 +257,7 @@ function render(){
   const reg=document.getElementById('reg');reg.innerHTML='';D.meta.forEach((m,i)=>{const p=D.periods[m.key],t=p.reg.reduce((a,b)=>a+b,0),row=document.createElement('div');row.className='stackrow';row.style.cursor='pointer';row.innerHTML='<span'+(i===pi?' style="font-weight:800;color:#132238"':'')+'>'+m.label+' '+m.range+'</span><div class="regbar">'+p.reg.map((v,k)=>v?'<i style="width:'+(v/t*100)+'%;background:'+D.regions[k].color+'" title="'+D.regions[k].label+' '+fmt(v)+'동 ('+pct(v,t)+')"></i>':'').join('')+'</div>';row.addEventListener('click',()=>{pi=i;render();draw();});reg.append(row);});
   document.getElementById('regKeys').innerHTML=D.regions.map(r=>'<span><i class="swatch" style="background:'+r.color+'"></i>'+r.label+'</span>').join('');
   const mx2=document.getElementById('mix');mx2.innerHTML='';D.meta.forEach((m,i)=>{const p=D.periods[m.key],t=p.mix.reduce((a,b)=>a+b,0),row=document.createElement('div');row.className='stackrow';row.innerHTML='<span'+(i===pi?' style="font-weight:800;color:#132238"':'')+'>'+m.label+'</span><div class="stack">'+p.mix.map((v,k)=>v?'<i style="width:'+(v/t*100)+'%;background:'+D.classes[k].color+'" title="'+D.classes[k].label+' '+fmt(v)+'동 ('+pct(v,t)+')"></i>':'').join('')+'</div>';mx2.append(row);});
-  document.getElementById('disc').innerHTML='<b>시기 구분 기준</b><br>삼척 도시형태3 탭처럼 인구 전환점으로 세 시기를 나눴습니다. '+esc(D.cfg.basis)+'<br><br><b>방법</b><br>건물은 국토교통부·브이월드 GIS건물통합정보 '+fmt(D.n)+'동(사용승인일 유효 '+fmt(D.dated)+'동)을 썼고, 웹에서 가볍게 보이도록 '+D.gridM+'m 격자로 묶어 표시했습니다. 주거·산업 윤곽과 신규 시가지는 시기 말까지(또는 시기 중) 사용승인된 현존 건물의 밀도로 그렸습니다. 지역 구분: '+esc(D.cfg.regionText)+'<br><br><b>자료 한계</b><br>현존 건물만 있어 철거·재건축된 건물은 빠지고, 오래된 시기일수록 실제보다 적게 나타납니다. 주민등록인구는 2010년 10월부터 거주불명자, 2015년 1월부터 재외국민을 포함해 그 전후 비교에 주의가 필요합니다. '+esc(D.cfg.limits)+'<br><small>출처: '+esc(D.popSource)+' · 국토교통부·브이월드 GIS건물통합정보</small>';
+  document.getElementById('disc').innerHTML='<b>시기 구분 기준</b><br>삼척 도시형태3 탭처럼 인구 전환점으로 세 시기를 나눴습니다. '+esc(D.cfg.basis)+'<br><br><b>방법</b><br>건물은 국토교통부·브이월드 GIS건물통합정보 '+fmt(D.n)+'동(사용승인일 유효 '+fmt(D.dated)+'동)을 썼고, 웹에서 가볍게 보이도록 '+D.gridM+'m 격자로 묶어 표시했습니다. 주거·산업 윤곽과 신규 시가지는 시기 말까지(또는 시기 중) 사용승인된 현존 건물의 밀도로 그렸습니다. 지역 구분: '+esc(D.cfg.regionText)+'<br><br><b>자료 한계</b><br>현존 건물만 있어 철거·재건축된 건물은 빠지고, 오래된 시기일수록 실제보다 적게 나타납니다. 또 이 지역 건물 데이터의 사용승인일은 '+D.dataLastYear+'년까지만 충분히 기록되어 있어 그 뒤 신축은 거의 빠져 있습니다. 주민등록인구는 2010년 10월부터 거주불명자, 2015년 1월부터 재외국민을 포함해 그 전후 비교에 주의가 필요합니다. '+esc(D.cfg.limits)+'<br><small>출처: '+esc(D.popSource)+' · 국토교통부·브이월드 GIS건물통합정보</small>';
   legend();}
 // ---- 확대·축소·이동: 마우스 휠, 트랙패드(스크롤·핀치), 터치 핀치, Safari 제스처, 더블클릭, +/− 버튼 ----
 const ZMIN=.25,ZMAX=512,ptrs=new Map();let pinch=null,raf=0;
