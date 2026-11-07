@@ -7,3 +7,6 @@ vworld_key.js
 *.zip
 node_modules/
 .DS_Store
+
+# 부산 다운로드 중간 저장분(최종본은 busan_buildings_points.json)
+data/raw/busan/tiles/
