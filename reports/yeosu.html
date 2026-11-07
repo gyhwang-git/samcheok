@@ -209,12 +209,25 @@ function render(){
   const mx2=document.getElementById('mix');mx2.innerHTML='';D.meta.forEach((m,i)=>{const p=D.periods[m.key],t=p.mix.reduce((a,b)=>a+b,0),row=document.createElement('div');row.className='stackrow';row.innerHTML='<span'+(i===pi?' style="font-weight:800;color:#132238"':'')+'>'+m.label+'</span><div class="stack">'+p.mix.map((v,k)=>v?'<i style="width:'+(v/t*100)+'%;background:'+D.classes[k].color+'" title="'+D.classes[k].label+' '+fmt(v)+'동 ('+pct(v,t)+')"></i>':'').join('')+'</div>';mx2.append(row);});
   document.getElementById('disc').innerHTML='<b>시기 구분 기준</b><br>삼척 도시형태3 탭처럼 인구 전환점으로 세 시기를 나눴습니다. '+esc(D.cfg.basis)+'<br><br><b>방법</b><br>건물은 국토교통부·브이월드 GIS건물통합정보 '+fmt(D.n)+'동(사용승인일 유효 '+fmt(D.dated)+'동)을 썼고, 웹에서 가볍게 보이도록 '+D.gridM+'m 격자로 묶어 표시했습니다. 주거·산업 윤곽과 신규 시가지는 시기 말까지(또는 시기 중) 사용승인된 현존 건물의 밀도로 그렸습니다. 지역 구분: '+esc(D.cfg.regionText)+'<br><br><b>자료 한계</b><br>현존 건물만 있어 철거·재건축된 건물은 빠지고, 오래된 시기일수록 실제보다 적게 나타납니다. 주민등록인구는 2010년 10월부터 거주불명자, 2015년 1월부터 재외국민을 포함해 그 전후 비교에 주의가 필요합니다. '+esc(D.cfg.limits)+'<br><small>출처: '+esc(D.popSource)+' · 국토교통부·브이월드 GIS건물통합정보</small>';
   legend();}
-canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);drag=true;last={x:e.clientX,y:e.clientY};canvas.classList.add('dragging');});
-canvas.addEventListener('pointermove',e=>{if(!drag)return;panX+=e.clientX-last.x;panY+=e.clientY-last.y;last={x:e.clientX,y:e.clientY};draw();});
-canvas.addEventListener('pointerup',()=>{drag=false;canvas.classList.remove('dragging');});
-function zoomAt(f,x,y){const o=zoom;zoom=Math.max(1,Math.min(256,zoom*f));const ra=zoom/o,r=canvas.getBoundingClientRect();panX=x-r.width/2-(x-r.width/2-panX)*ra;panY=y-r.height/2-(y-r.height/2-panY)*ra;draw();}
-canvas.addEventListener('wheel',e=>{e.preventDefault();const r=canvas.getBoundingClientRect();zoomAt(e.deltaY<0?1.2:1/1.2,e.clientX-r.left,e.clientY-r.top);},{passive:false});
-document.getElementById('zoomIn').addEventListener('click',()=>zoomAt(1.3,canvas.clientWidth/2,canvas.clientHeight/2));document.getElementById('zoomOut').addEventListener('click',()=>zoomAt(1/1.3,canvas.clientWidth/2,canvas.clientHeight/2));
+// ---- 확대·축소·이동: 마우스 휠, 트랙패드(스크롤·핀치), 터치 핀치, Safari 제스처, 더블클릭, +/− 버튼 ----
+const ZMIN=.25,ZMAX=512,ptrs=new Map();let pinch=null,raf=0;
+const redraw=()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=0;draw();});};
+function zoomAt(f,x,y){const o=zoom;zoom=Math.max(ZMIN,Math.min(ZMAX,zoom*f));const ra=zoom/o,r=canvas.getBoundingClientRect();panX=x-r.width/2-(x-r.width/2-panX)*ra;panY=y-r.height/2-(y-r.height/2-panY)*ra;redraw();}
+const local=e=>{const r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top];};
+canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,local(e));if(ptrs.size===2){const [a,b]=[...ptrs.values()];pinch={d:Math.hypot(a[0]-b[0],a[1]-b[1]),m:[(a[0]+b[0])/2,(a[1]+b[1])/2]};drag=false;}else{drag=true;last={x:e.clientX,y:e.clientY};}canvas.classList.add('dragging');});
+canvas.addEventListener('pointermove',e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,local(e));
+  if(pinch&&ptrs.size>=2){const [a,b]=[...ptrs.values()],d=Math.hypot(a[0]-b[0],a[1]-b[1]),m=[(a[0]+b[0])/2,(a[1]+b[1])/2];panX+=m[0]-pinch.m[0];panY+=m[1]-pinch.m[1];if(pinch.d>0)zoomAt(d/pinch.d,m[0],m[1]);pinch={d,m};return;}
+  if(!drag)return;panX+=e.clientX-last.x;panY+=e.clientY-last.y;last={x:e.clientX,y:e.clientY};redraw();});
+const endPtr=e=>{ptrs.delete(e.pointerId);if(ptrs.size<2)pinch=null;if(!ptrs.size){drag=false;canvas.classList.remove('dragging');}};
+canvas.addEventListener('pointerup',endPtr);canvas.addEventListener('pointercancel',endPtr);
+// 휠: 스크롤 양에 비례(트랙패드는 작은 값이 연속으로 옴), ctrl+휠 = 트랙패드 핀치(크롬·엣지·파이어폭스)
+canvas.addEventListener('wheel',e=>{e.preventDefault();const [x,y]=local(e);const dy=e.deltaMode===1?e.deltaY*16:e.deltaMode===2?e.deltaY*400:e.deltaY;zoomAt(Math.exp(-dy*(e.ctrlKey?.01:.0018)),x,y);},{passive:false});
+// Safari 트랙패드 핀치
+let gs=1;canvas.addEventListener('gesturestart',e=>{e.preventDefault();gs=1;});canvas.addEventListener('gesturechange',e=>{e.preventDefault();const [x,y]=local(e);zoomAt(e.scale/gs,x,y);gs=e.scale;});canvas.addEventListener('gestureend',e=>e.preventDefault());
+canvas.addEventListener('dblclick',e=>{e.preventDefault();const [x,y]=local(e);zoomAt(e.shiftKey?1/2:2,x,y);});
+document.getElementById('zoomIn').addEventListener('click',()=>zoomAt(1.5,canvas.clientWidth/2,canvas.clientHeight/2));document.getElementById('zoomOut').addEventListener('click',()=>zoomAt(1/1.5,canvas.clientWidth/2,canvas.clientHeight/2));
+// 키보드: +/− 확대·축소, 0 전체 보기
+window.addEventListener('keydown',e=>{if(e.target.closest&&e.target.closest('input,select,textarea'))return;if(e.key==='+'||e.key==='=')zoomAt(1.5,canvas.clientWidth/2,canvas.clientHeight/2);else if(e.key==='-'||e.key==='_')zoomAt(1/1.5,canvas.clientWidth/2,canvas.clientHeight/2);else if(e.key==='0')fit();});
 document.getElementById('resetView').addEventListener('click',fit);window.addEventListener('resize',resize);
 const tg=document.getElementById('togglePanel');tg.addEventListener('click',()=>{const c=document.body.classList.toggle('collapsed');tg.textContent=c?'▶ 패널 열기':'◀ 패널 접기';});
 render();fit();
